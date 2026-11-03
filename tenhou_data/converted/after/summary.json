@@ -1,0 +1,26 @@
+{
+  "schema_version": 4,
+  "layout": "reference451_csv",
+  "workers": 4,
+  "mode": "ALL",
+  "seed": null,
+  "rank_policy": "after",
+  "check_log": false,
+  "date_rule": "game_date > achievement_date",
+  "requested_players": null,
+  "max_games": null,
+  "selected_players": 30,
+  "discovered_logs": 159401,
+  "exclusion_counts": {
+    "on_or_before_achievement_date": 159361,
+    "eligible": 40
+  },
+  "candidate_games_after_date_filter": 40,
+  "converted_games": 40,
+  "training_rows": 46136,
+  "row_unit": "one state per row; 12 training samples generated at training time",
+  "conversion_errors": 0,
+  "full_reference_written": true,
+  "contains_hidden_hands": true,
+  "output_dir": "/home/fujita_lab/WSL/AI-0810/tenhou_data/converted/after"
+}

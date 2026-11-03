@@ -11,7 +11,6 @@ import argparse
 import os
 from functools import lru_cache
 from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
-import jikken_settei as settei
 import csv
 import gzip
 import hashlib
@@ -29,7 +28,7 @@ from datetime import date
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-# S/M/Lの人数・対局数・seedは jikken_settei.py で設定します。
+# S/M/Lなどの学習条件は aite_tehai_gakushu.py 冒頭で設定します。
 MAX_DISCARDS_PER_PLAYER = 24
 MAX_MELD_SLOTS = 4
 
@@ -426,7 +425,7 @@ def write_table(path, rows, columns):
 def main():
     parser = argparse.ArgumentParser(description='MJLOGをCSVへ変換。モデル作成を優先する場合は --rank-policy after を指定')
     parser.add_argument('--rank-policy',choices=['all','after'],default='all',help='all=全日付、after=達成翌日以降だけ変換')
-    parser.add_argument('--base-dir', type=Path, default=settei.DATA_DIR)
+    parser.add_argument('--base-dir', type=Path, default=Path(__file__).resolve().parent/'tenhou_data')
     parser.add_argument('--output-dir', type=Path)
     parser.add_argument('--workers',type=int,default=min(4,os.cpu_count() or 1),help='並列処理数。既定は最大4')
     parser.add_argument('--resume',action='store_true',help='完成済みCSVを再利用して途中から続行')

@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
 """TensorFlowで公開情報から相手の伏せた手牌34種の枚数を推定。
-設定: jikken_settei.py。使用例: python aite_tehai_gakushu.py --mode S
-入力: tenhou_data/converted/all/（対局別CSVと一覧）。学習時に人数・達成日で抽出。
-出力: tenhou_data/models/S/tehai_yosoku.keras と評価・入力列・学習履歴。
+設定: このファイル冒頭。使用例: python aite_tehai_gakushu.py --mode S
+入力: 冒頭のINPUT_DIR（既定はtenhou_data/converted/after/）（対局別CSVと一覧）。学習時に人数・達成日で抽出。
+出力: 名前付きモデルと学習設定。評価は moderu_jikko.py で別途実行。
 対局単位で分割し、評価データを学習や正規化に使用しません。
 """
 from __future__ import annotations
 
 import argparse
 import os
-import jikken_settei as settei
 import csv
 import gzip
 import hashlib
@@ -17,6 +16,44 @@ import json
 import random
 from pathlib import Path
 from datetime import date
+
+# ==================== 設定（ここを変更して保存） ====================
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "tenhou_data"
+MODE = "M"                 # "S", "M", "L"（小文字での指定も可能）
+SEED = 42                  # 同じ人数・seedなら同じ人を選択
+
+# players: 選ぶ人数。None はmanifest内の全員。
+# max_games: 学習に選ぶ対局数の上限。None は条件を満たす全対局。
+# ここで学習条件を変更します。CSV変換の日付条件は --rank-policy で指定。
+# max_train / max_test: 学習/評価に保持する行数の上限（人数ではありません）。
+SIZE_SETTINGS = {
+    "S": {"players": 5,    "max_games": None, "max_train": 12000, "max_test": 3000},
+    "M": {"players": 12,   "max_games": None, "max_train": 24000, "max_test": 6000},
+    "L": {"players": None, "max_games": None, "max_train": 48000, "max_test": 12000},
+}
+
+EPOCHS = 20               # 学習を繰り返す回数
+BATCH_SIZE = 128          # 一度に学習する行数
+LEARNING_RATE = 0.001
+
+
+INPUT_DIR = DATA_DIR / "converted" / "after"
+MODEL_NAME = "shiken_01"  # 新しく作成するモデル名
+
+
+def size_settings(mode):
+    values = SIZE_SETTINGS[mode.upper()].copy()
+    for name in ("players", "max_games"):
+        v = values[name]
+        if v is not None and (isinstance(v, bool) or not isinstance(v, int) or v < 1):
+            raise ValueError(f"{mode}.{name} は1以上の整数またはNoneです")
+    for name in ("max_train", "max_test"):
+        v = values[name]
+        if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+            raise ValueError(f"{mode}.{name} は1以上の整数です")
+    return values
+
 
 RED_TO_BASE = {35: 5, 36: 14, 37: 23}
 from paifu_csv_henkan import TRAIN_COLUMNS, TRAIN_META_COLUMNS, TRAIN_LABEL_COLUMNS, REFERENCE_COLUMNS, REFERENCE_EXTRA_COLUMNS, reference_to_training
@@ -62,7 +99,7 @@ def select_csvs(directory, mode, seed, players_override=None, max_games_override
     def table(name):
         with (directory/name).open(encoding='utf-8-sig',newline='') as f:
             return list(csv.DictReader(f))
-    config = settei.size_settings(mode)
+    config = size_settings(mode)
     players = sorted(table('selected_players.csv'), key=lambda p:p['player'])
     n = config['players'] if players_override is None else (players_override or None)
     if n is not None and n > len(players):
@@ -106,12 +143,21 @@ def iter_csv_rows(paths):
                 yield from reference_to_training(ref,aux,info)
 
 
-def load_samples(path, max_train: int, max_test: int, seed: int):
-    game_ids = {info['game_id'] for _,_,info in path}
-    if len(game_ids) < 2 or '' in game_ids:
+def split_game_ids(paths, seed):
+    game_ids={info['game_id'] for _,_,info in paths}
+    if len(game_ids)<2 or '' in game_ids:
         raise ValueError('学習・評価には異なる正常な対局IDが2件以上必要です')
-    ordered = sorted(game_ids, key=lambda gid: hashlib.blake2b(f"{seed}:{gid}".encode(), digest_size=16).digest())
-    test_games = set(ordered[:max(1, round(len(ordered)*0.2))])
+    ordered=sorted(game_ids,key=lambda gid:hashlib.blake2b(f'{seed}:{gid}'.encode(),digest_size=16).digest())
+    test=set(ordered[:max(1,round(len(ordered)*0.2))])
+    return game_ids-test,test
+
+
+def load_samples(path, max_train: int, max_test: int, seed: int, split='both'):
+    if split not in ('both','train','test'):raise ValueError('不正なsplitです')
+    train_games,test_games=split_game_ids(path,seed)
+    # train/test単独では反対側のCSVを開かない。設定変更時も評価サンプルを訓練量から独立させる。
+    if split=='train':path=[p for p in path if p[2]['game_id'] in train_games]
+    elif split=='test':path=[p for p in path if p[2]['game_id'] in test_games]
     rng = random.Random(seed)
     train = []
     test = []
@@ -153,21 +199,39 @@ def build_model(tf, x_train, learning_rate):
     return model
 
 
+def format_evaluation(metrics):
+    """端末の最後に表示する評価側の数値。負の改善率もそのまま表示。"""
+    mae=metrics['mae']
+    baseline=metrics['mean_baseline_mae']
+    improvement=baseline-mae
+    rate=improvement/baseline*100 if baseline>0 else None
+    lines=['', '========== 評価結果（未学習の対局） ==========',
+           f'モデル MAE       : {mae:.6f}',
+           f'平均予測 MAE     : {baseline:.6f}',
+           f'MAE 改善幅       : {improvement:+.6f}',
+           f'誤差削減率       : {rate:+.2f}%' if rate is not None else '誤差削減率       : 算出不可（平均予測MAEが0）']
+    if 'mse' in metrics:lines.append(f'モデル MSE       : {metrics["mse"]:.6f}')
+    if 'rmse' in metrics:lines.append(f'モデル RMSE      : {metrics["rmse"]:.6f}')
+    lines+=['============================================']
+    return '\n'.join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", type=str.upper, choices=["S", "M", "L"], default=str(settei.MODE).upper())
+    parser.add_argument("--mode", type=str.upper, choices=["S", "M", "L"], default=str(MODE).upper())
     parser.add_argument("--max-train", type=int)
     parser.add_argument("--max-test", type=int)
-    parser.add_argument("--epochs", type=int, default=settei.EPOCHS)
-    parser.add_argument("--batch-size", type=int, default=settei.BATCH_SIZE)
-    parser.add_argument("--learning-rate", type=float, default=settei.LEARNING_RATE)
-    parser.add_argument("--seed", type=int, default=settei.SEED)
+    parser.add_argument("--epochs", type=int, default=EPOCHS)
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--learning-rate", type=float, default=LEARNING_RATE)
+    parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--input-dir", type=Path, help="全件CSVの保存フォルダ")
     parser.add_argument("--players", type=int, help="今回の人数を指定。0=全員")
     parser.add_argument("--max-games", type=int, help="今回の学習に選ぶ対局数の上限")
+    parser.add_argument("--name", help="モデル名。例: shiken_01")
     parser.add_argument("--output-dir", type=Path, help="モデルの保存先を指定")
     args = parser.parse_args()
-    config = settei.size_settings(args.mode)
+    config = size_settings(args.mode)
     args.max_train = config['max_train'] if args.max_train is None else args.max_train
     args.max_test = config['max_test'] if args.max_test is None else args.max_test
     if min(args.max_train, args.max_test, args.epochs, args.batch_size) < 1 or args.learning_rate <= 0:
@@ -176,15 +240,18 @@ def main():
         parser.error('--playersは0以上です')
     if args.max_games is not None and args.max_games < 2:
         parser.error('--max-gamesは2以上です')
-    source = args.input_dir or settei.DATA_DIR/"converted"/"all"
-    output = args.output_dir or settei.DATA_DIR/"models"/args.mode
+    source = args.input_dir or INPUT_DIR
+    if args.name and (Path(args.name).name!=args.name or args.name in ('.','..') or '\\' in args.name):
+        parser.error('--nameにはフォルダを含まない名前を指定してください')
+    if args.name and args.output_dir:parser.error('--nameと--output-dirはどちらか一方を指定してください')
+    output = args.output_dir or DATA_DIR/"models"/(args.name or MODEL_NAME)
     if not (source/"summary.json").is_file():
         parser.error(f"全件CSVがありません: {source}。先に python paifu_csv_henkan.py で変換してください")
     if (output/'tehai_yosoku.keras').exists():
         parser.error(f"既存モデルがあります。別の --output-dir を指定してください: {output}")
     paths, selected_players, selected_games = select_csvs(source,args.mode,args.seed,args.players,args.max_games)
     print(f'学習対象: {len(selected_players)}人 / 達成翌日以降{len(selected_games)}対局',flush=True)
-    os.environ.setdefault("KERAS_HOME", str(settei.BASE_DIR/'.keras'))
+    os.environ.setdefault("KERAS_HOME", str(BASE_DIR/'.keras'))
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
     try:
         import numpy as np
@@ -197,37 +264,34 @@ def main():
     for gpu in tf.config.list_physical_devices('GPU'):
         tf.config.experimental.set_memory_growth(gpu, True)
     print(f"TensorFlow {tf.__version__} / 入力: {source.resolve()}", flush=True)
-    features, train, test, n_train, n_test = load_samples(paths, args.max_train, args.max_test, args.seed)
-    if not train or not test:
-        raise SystemExit("訓練または評価の行がありません。変換する対局を増やしてください")
-    train_games, test_games = {r[0] for r in train}, {r[0] for r in test}
-    if train_games & test_games:
-        raise RuntimeError("同一対局が学習・評価の両方に入りました")
-    x_train = np.asarray([r[3] for r in train], dtype=np.float32)
-    x_test = np.asarray([r[3] for r in test], dtype=np.float32)
-    y_train = np.asarray([r[4] for r in train], dtype=np.float32)
-    y_test = np.asarray([r[4] for r in test], dtype=np.float32)
-    if not all(np.isfinite(a).all() for a in [x_train,x_test,y_train,y_test]):
-        raise ValueError("CSVに非有限の数値が含まれています")
+    features, train, test, n_train, n_test = load_samples(paths, args.max_train, args.max_test, args.seed, split='train')
+    if not train:raise SystemExit('訓練行がありません')
+    reserved_train,reserved_test=split_game_ids(paths,args.seed)
+    train_games={r[0] for r in train}
+    if train_games & reserved_test:raise RuntimeError('対局分割の重複があります')
+    x_train = np.asarray([r[3] for r in train],dtype=np.float32)
+    y_train = np.asarray([r[4] for r in train],dtype=np.float32)
+    if not all(np.isfinite(a).all() for a in [x_train,y_train]):raise ValueError('非有限の数値が含まれています')
     model = build_model(tf, x_train, args.learning_rate)
     options = tf.data.Options()
     options.threading.private_threadpool_size = 1
     train_data = tf.data.Dataset.from_tensor_slices((x_train,y_train)).shuffle(len(train),seed=args.seed).batch(args.batch_size).with_options(options)
-    print(f"学習開始: 訓練{len(train)}行/{len(train_games)}対局、評価{len(test)}行/{len(test_games)}対局",flush=True)
+    print(f"学習開始: 訓練{len(train)}行/{len(train_games)}対局、評価用に{len(reserved_test)}対局を確保（今回は評価しません）",flush=True)
     # 評価側はfitに渡さない。epoch選択や学習中の調整にも使用しない。
     history = model.fit(train_data, epochs=args.epochs, verbose=2, shuffle=False)
-    predicted = np.concatenate([model(x_test[i:i+args.batch_size],training=False).numpy()
-                                for i in range(0,len(x_test),args.batch_size)])
-    mae = float(np.abs(y_test-predicted).mean())
-    metrics = dict(framework="TensorFlow", tensorflow_version=tf.__version__,
-                   train_rows=len(train), test_rows=len(test), available_train_rows=n_train,
-                   available_test_rows=n_test, train_game_ids=sorted(train_games),test_game_ids=sorted(test_games),
-                   game_overlap=0, feature_count=len(features),mae=mae,
-                   mean_baseline_mae=float(np.abs(y_test-y_train.mean(axis=0)).mean()),
-                   epochs=args.epochs,batch_size=args.batch_size,seed=args.seed,learning_rate=args.learning_rate,
-                   input=str(source.resolve()), selected_players=[p["player"] for p in selected_players], rank_policy="after", normalization="training data only; stored in model",
-                   target="concealed hand tile counts, 34 types; reds merged; not a legal hand generator",
-                   split="seeded hash ordering of game IDs, 20% holdout (minimum 1); no row-level split")
+    settings=dict(format_version=1, sampler_version=2, model_name=output.name,
+                  framework='TensorFlow',tensorflow_version=tf.__version__,mode=args.mode,
+                  input=str(source.resolve()),seed=args.seed,max_train=args.max_train,max_test=args.max_test,
+                  epochs=args.epochs,batch_size=args.batch_size,learning_rate=args.learning_rate,
+                  requested_players=config['players'] if args.players is None else (args.players or None),
+                  max_games=config['max_games'] if args.max_games is None else args.max_games,
+                  train_rows=len(train),available_train_rows=n_train,train_game_ids=sorted(train_games),
+                  reserved_train_game_ids=sorted(reserved_train),test_game_ids=sorted(reserved_test),
+                  selected_players=[p['player'] for p in selected_players],feature_count=len(features),
+                  train_label_mean=y_train.mean(axis=0).tolist(),rank_policy='after',game_overlap=0,
+                  normalization='training data only; stored in model',
+                  target='concealed hand tile counts, 34 types; reds merged',
+                  split='seeded hash ordering of game IDs, 20% holdout; independent partition sampling')
     output.mkdir(parents=True, exist_ok=True)
     for filename,records in [('gakushu_players.csv',selected_players),('gakushu_games.csv',selected_games)]:
         with (output/filename).open('w',encoding='utf-8-sig',newline='') as f:
@@ -237,17 +301,14 @@ def main():
     model.save(output/'tehai_yosoku.keras')
     # 保存したモデルを読み直して予測値の一致も確認する。
     restored = tf.keras.models.load_model(output/'tehai_yosoku.keras')
-    np.testing.assert_allclose(restored(x_test[:5],training=False).numpy(),predicted[:5],rtol=1e-5,atol=1e-6)
-    metrics['saved_model_reload_verified'] = True
-    for name,value in [('metrics.json',metrics),('feature_names.json',features),('gakushu_rireki.json',history.history)]:
+    np.testing.assert_allclose(restored(x_train[:5],training=False).numpy(),model(x_train[:5],training=False).numpy(),rtol=1e-5,atol=1e-6)
+    settings['saved_model_reload_verified'] = True
+    for name,value in [('gakushu_json',settings),('feature_names.json',features),('gakushu_rireki.json',history.history)]:
         (output/name).write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
-    with (output/'validation_examples.csv').open('w',encoding='utf-8',newline='') as f:
-        w=csv.writer(f)
-        w.writerow(['game_id','observer','target_player','actual_counts','predicted_counts'])
-        for record,yp in zip(test[:20],predicted[:20]):
-            w.writerow([*record[:3],json.dumps(record[4]),json.dumps(yp.tolist())])
-    print(json.dumps(metrics,ensure_ascii=False,indent=2),flush=True)
-    print(f"モデル保存先: {output.resolve()}",flush=True)
+    print(f'モデル作成完了: {output.resolve()}',flush=True)
+    print('次に評価するコマンド:',flush=True)
+    print(f'python moderu_jikko.py --model-dir "{output.resolve()}"',flush=True)
+
 
 
 if __name__ == '__main__':

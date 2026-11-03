@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "mode": "S",
+  "seed": 42,
+  "rank_policy": "after",
+  "check_log": false,
+  "date_rule": "game_date > achievement_date (JST calendar date)",
+  "selected_players": 5,
+  "discovered_logs": 29502,
+  "exclusion_counts": {
+    "on_or_before_achievement_date": 29499,
+    "eligible": 3
+  },
+  "candidate_games_after_date_filter": 3,
+  "converted_games": 3,
+  "training_rows": 36720,
+  "conversion_errors": 0,
+  "full_reference_written": false,
+  "output_dir": "/home/fujita_lab/WSL/AI-0810/tenhou_data/converted/S"
+}

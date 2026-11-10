@@ -266,3 +266,15 @@ python moderu_jikko.py --name miekazu_01 --action hyoka --test-games 4 --test-ro
 同じモデル・元データ・抽出条件でseedを固定すると同じ行を再現します。比較対象を `--compare jikken_02` で指定すると両モデルを同じ行で評価します。学習対局との重複を検査します。
 結果は `hyoka/metrics.json` に保存され、端末にはMAE、MSE、RMSE、枚数一致率、保有ありの適合率・再現率・F1などが出ます。後半4指標は予測枚数を四捨五入した値で計算します。枚数一致率には0枚同士の一致も含みます。
 `--action douji` でも `--eval-seed` と `--test-games` を使用できます。評価する局面の上限は `--cases` で指定します。
+
+
+## 別端末で実行する
+
+修正をコミット・pushし、別端末でclone先を更新します。保存済みモデルに学内の絶対パスがあっても、clone先のtenhou_data以下からCSVを探します。CSVを別フォルダに置いた場合は --input-dir で変換結果のフォルダを指定します。
+
+```bash
+python moderu_jikko.py --name miekazu_01 --action info
+python moderu_jikko.py --name miekazu_01 --action sannin --state-index 30
+```
+
+infoはPythonだけで保存済み結果を表示します。予測や評価にはTensorFlowとNumPyが必要です。大容量のCSVを持ち帰らない場合は、自宅用ZIPを使います。

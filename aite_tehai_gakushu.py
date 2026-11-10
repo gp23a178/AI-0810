@@ -365,9 +365,11 @@ def main():
     print(f"学習開始: 訓練{len(train)}行/{len(train_games)}対局、評価用に{len(reserved_test)}対局を確保（今回は評価しません）",flush=True)
     # 評価側はfitに渡さない。epoch選択や学習中の調整にも使用しない。
     history = model.fit(train_data, epochs=args.epochs, verbose=2, shuffle=False)
+    input_path = source.resolve()
+    saved_input = input_path.relative_to(BASE_DIR).as_posix() if input_path.is_relative_to(BASE_DIR) else str(input_path)
     settings=dict(format_version=1, sampler_version=3, model_name=output.name, architecture='visible_tile_model',
                   framework='TensorFlow',tensorflow_version=tf.__version__,mode=args.mode,
-                  input=str(source.resolve()),seed=args.seed,max_train=args.max_train,max_test=args.max_test,
+                  input=saved_input,seed=args.seed,max_train=args.max_train,max_test=args.max_test,
                   epochs=args.epochs,batch_size=args.batch_size,learning_rate=args.learning_rate,
                   requested_players=config['players'] if args.players is None else (args.players or None),
                   max_games=config['max_games'] if args.max_games is None else args.max_games,

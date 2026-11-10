@@ -23,6 +23,26 @@ def training_settings_path(directory):
     return path if path.is_file() else directory/'gakushu_json'
 
 
+def resolve_csv_root(saved_input, override=None):
+    """モデルを別の端末へコピーした場合は、プロジェクト内の相対位置を使う。"""
+    if override is not None:
+        candidates = [Path(override).resolve()]
+    else:
+        saved = Path(saved_input)
+        candidates = []
+        # WindowsとWSLで保存された既存の絶対パスを、clone先へ置き換える。
+        parts = saved_input.replace(chr(92), '/').split('/')
+        if 'tenhou_data' in parts:
+            start = parts.index('tenhou_data')
+            candidates.append(BASE_DIR.joinpath(*parts[start:]).resolve())
+        candidates.append((BASE_DIR / saved).resolve())
+    for path in candidates:
+        if (path/'selected_games.csv').is_file():
+            return path
+    checked = ', '.join(str(path) for path in candidates)
+    raise ValueError(f'変換済みCSVの一覧が見つかりません。--input-dir で指定してください。確認先: {checked}')
+
+
 def saved_paths(root,records):
     root=Path(root).resolve()
     paths=[]
@@ -79,7 +99,7 @@ def evaluate(args):
     if names!=expected:raise ValueError('入力列の許可リストが一致しません')
     with (directory/'gakushu_games.csv').open(encoding='utf-8-sig',newline='') as f:
         records=list(csv.DictReader(f))
-    paths=saved_paths(config['input'],records)
+    paths=saved_paths(resolve_csv_root(config['input'], args.input_dir),records)
     train_ids,test_ids=split_game_ids(paths,config['seed'])
     if set(config['train_game_ids']) & test_ids or test_ids!=set(config['test_game_ids']):raise ValueError('保存時の対局分割と一致しません')
     saved_cap = config['test_rows'] if legacy else config['max_test']
@@ -234,7 +254,7 @@ def evaluate_joint(args):
         records = [row for row in csv.DictReader(file) if row['game_id'] in test_ids]
     if {r['game_id'] for r in records} != test_ids:
         raise ValueError('保存済みの評価対局が揃っていません')
-    paths, eval_seed = choose_evaluation_games(args, saved_paths(config['input'], records))
+    paths, eval_seed = choose_evaluation_games(args, saved_paths(resolve_csv_root(config['input'], args.input_dir), records))
 
     cases = []
     rng = random.Random(eval_seed)
@@ -334,7 +354,7 @@ def prediction_rows(args):
     expected = [n for n in TRAIN_COLUMNS if n not in META_COLUMNS and n not in TRAIN_LABEL_COLUMNS]
     if names != expected:
         raise ValueError('モデルの入力列が現在の安全な許可列と一致しません')
-    root = (args.input_dir or Path(config['input'])).resolve()
+    root = resolve_csv_root(config['input'], args.input_dir)
     if args.game_id or args.input_dir:
         index = root/'selected_games.csv'
         gid = args.game_id
@@ -527,7 +547,7 @@ def main():
     parser.add_argument('--observer',type=int,choices=range(4),default=0)
     parser.add_argument('--target',type=int,choices=range(4),default=1)
     parser.add_argument('--game-id',help='予測する対局ID')
-    parser.add_argument('--input-dir',type=Path,help='予測用CSVの一覧がある変換先')
+    parser.add_argument('--input-dir',type=Path,help='評価・予測に使う変換先フォルダ')
     parser.add_argument('--top',type=int,choices=range(1,35),default=10,metavar='1..34')
     parser.add_argument('--show-answer',action='store_true')
     args=parser.parse_args()

@@ -1,2 +1,10 @@
 myenv/
 *.zip
+
+# Local data and environments
+tenhou_data/archives/
+tenhou_data/converted/
+mochikaeri/
+.venv/
+.keras/
+__pycache__/

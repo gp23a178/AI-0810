@@ -1,0 +1,212 @@
+{
+  "cases": 256,
+  "remaining_only": {
+    "matched_tiles_per_hand": 5.381510416666667,
+    "matched_tile_rate": 0.438468067048589,
+    "mae": 0.40540747549019607,
+    "violation_cases": 0
+  },
+  "independent": {
+    "matched_tiles_per_hand": 5.420572916666667,
+    "matched_tile_rate": 0.44165075323573094,
+    "mae": 0.40310968137254904,
+    "violation_cases": 19
+  },
+  "joint": {
+    "matched_tiles_per_hand": 5.423177083333333,
+    "matched_tile_rate": 0.4418629323148738,
+    "mae": 0.4029564950980392,
+    "violation_cases": 0
+  },
+  "joint_gain_per_hand": 0.0026041666666660745,
+  "test_game_ids": [
+    "2011020613gm-00a9-0000-3774f8d1",
+    "2011120822gm-00a9-0000-d9e166ec",
+    "2014021221gm-00a9-0000-23324af3",
+    "2014092702gm-00a9-0000-b9482be0",
+    "2015042022gm-00a9-0000-e28a3f54",
+    "2021032711gm-00a9-0000-78b3c374",
+    "2022050811gm-00a9-0000-0972fc19",
+    "2024120321gm-00a9-0000-7b9af3aa"
+  ],
+  "available_cases": 18108,
+  "seed": 42,
+  "per_game": {
+    "2011020613gm-00a9-0000-3774f8d1": {
+      "cases": 37,
+      "remaining_only": {
+        "matched_tiles_per_hand": 5.711711711711712,
+        "matched_tile_rate": 0.4574314574314574,
+        "mae": 0.3985161632220455,
+        "violation_cases": 0
+      },
+      "independent": {
+        "matched_tiles_per_hand": 5.666666666666667,
+        "matched_tile_rate": 0.4538239538239538,
+        "mae": 0.40116587175410706,
+        "violation_cases": 3
+      },
+      "joint": {
+        "matched_tiles_per_hand": 5.666666666666667,
+        "matched_tile_rate": 0.4538239538239538,
+        "mae": 0.40116587175410706,
+        "violation_cases": 0
+      },
+      "joint_gain_per_hand": 0.0
+    },
+    "2011120822gm-00a9-0000-d9e166ec": {
+      "cases": 27,
+      "remaining_only": {
+        "matched_tiles_per_hand": 5.54320987654321,
+        "matched_tile_rate": 0.4535353535353535,
+        "mae": 0.39288307915758897,
+        "violation_cases": 0
+      },
+      "independent": {
+        "matched_tiles_per_hand": 5.419753086419753,
+        "matched_tile_rate": 0.44343434343434346,
+        "mae": 0.40014524328249823,
+        "violation_cases": 4
+      },
+      "joint": {
+        "matched_tiles_per_hand": 5.407407407407407,
+        "matched_tile_rate": 0.44242424242424244,
+        "mae": 0.4008714596949891,
+        "violation_cases": 0
+      },
+      "joint_gain_per_hand": -0.012345679012345734
+    },
+    "2014021221gm-00a9-0000-23324af3": {
+      "cases": 41,
+      "remaining_only": {
+        "matched_tiles_per_hand": 5.105691056910569,
+        "matched_tile_rate": 0.4211938296445339,
+        "mae": 0.41272118603538976,
+        "violation_cases": 0
+      },
+      "independent": {
+        "matched_tiles_per_hand": 5.2926829268292686,
+        "matched_tile_rate": 0.43661971830985913,
+        "mae": 0.40172166427546635,
+        "violation_cases": 3
+      },
+      "joint": {
+        "matched_tiles_per_hand": 5.308943089430894,
+        "matched_tile_rate": 0.4379610999329309,
+        "mae": 0.4007651841224294,
+        "violation_cases": 0
+      },
+      "joint_gain_per_hand": 0.01626016260162544
+    },
+    "2014092702gm-00a9-0000-b9482be0": {
+      "cases": 30,
+      "remaining_only": {
+        "matched_tiles_per_hand": 5.455555555555556,
+        "matched_tile_rate": 0.4411500449236298,
+        "mae": 0.4065359477124183,
+        "violation_cases": 0
+      },
+      "independent": {
+        "matched_tiles_per_hand": 5.477777777777778,
+        "matched_tile_rate": 0.44294699011680144,
+        "mae": 0.40522875816993464,
+        "violation_cases": 2
+      },
+      "joint": {
+        "matched_tiles_per_hand": 5.466666666666667,
+        "matched_tile_rate": 0.4420485175202156,
+        "mae": 0.40588235294117647,
+        "violation_cases": 0
+      },
+      "joint_gain_per_hand": -0.011111111111111072
+    },
+    "2015042022gm-00a9-0000-e28a3f54": {
+      "cases": 49,
+      "remaining_only": {
+        "matched_tiles_per_hand": 5.197278911564626,
+        "matched_tile_rate": 0.4272930648769575,
+        "mae": 0.40976390556222486,
+        "violation_cases": 0
+      },
+      "independent": {
+        "matched_tiles_per_hand": 5.299319727891157,
+        "matched_tile_rate": 0.4356823266219239,
+        "mae": 0.40376150460184074,
+        "violation_cases": 3
+      },
+      "joint": {
+        "matched_tiles_per_hand": 5.299319727891157,
+        "matched_tile_rate": 0.4356823266219239,
+        "mae": 0.40376150460184074,
+        "violation_cases": 0
+      },
+      "joint_gain_per_hand": 0.0
+    },
+    "2021032711gm-00a9-0000-78b3c374": {
+      "cases": 35,
+      "remaining_only": {
+        "matched_tiles_per_hand": 5.3428571428571425,
+        "matched_tile_rate": 0.44208037825059104,
+        "mae": 0.3966386554621849,
+        "violation_cases": 0
+      },
+      "independent": {
+        "matched_tiles_per_hand": 5.476190476190476,
+        "matched_tile_rate": 0.45311268715524033,
+        "mae": 0.3887955182072829,
+        "violation_cases": 2
+      },
+      "joint": {
+        "matched_tiles_per_hand": 5.504761904761905,
+        "matched_tile_rate": 0.45547675334909377,
+        "mae": 0.38711484593837536,
+        "violation_cases": 0
+      },
+      "joint_gain_per_hand": 0.02857142857142847
+    },
+    "2022050811gm-00a9-0000-0972fc19": {
+      "cases": 34,
+      "remaining_only": {
+        "matched_tiles_per_hand": 5.470588235294118,
+        "matched_tile_rate": 0.4386792452830189,
+        "mae": 0.4117647058823529,
+        "violation_cases": 0
+      },
+      "independent": {
+        "matched_tiles_per_hand": 5.362745098039215,
+        "matched_tile_rate": 0.4300314465408805,
+        "mae": 0.41810841983852365,
+        "violation_cases": 2
+      },
+      "joint": {
+        "matched_tiles_per_hand": 5.352941176470588,
+        "matched_tile_rate": 0.42924528301886794,
+        "mae": 0.41868512110726647,
+        "violation_cases": 0
+      },
+      "joint_gain_per_hand": -0.009803921568627416
+    },
+    "2024120321gm-00a9-0000-7b9af3aa": {
+      "cases": 3,
+      "remaining_only": {
+        "matched_tiles_per_hand": 5.333333333333333,
+        "matched_tile_rate": 0.41025641025641024,
+        "mae": 0.45098039215686275,
+        "violation_cases": 0
+      },
+      "independent": {
+        "matched_tiles_per_hand": 5.555555555555555,
+        "matched_tile_rate": 0.42735042735042733,
+        "mae": 0.43790849673202614,
+        "violation_cases": 0
+      },
+      "joint": {
+        "matched_tiles_per_hand": 5.555555555555555,
+        "matched_tile_rate": 0.42735042735042733,
+        "mae": 0.43790849673202614,
+        "violation_cases": 0
+      },
+      "joint_gain_per_hand": 0.0
+    }
+  }
+}

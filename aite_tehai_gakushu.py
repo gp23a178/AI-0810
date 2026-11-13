@@ -59,6 +59,25 @@ RED_TO_BASE = {35: 5, 36: 14, 37: 23}
 from paifu_csv_henkan import TRAIN_COLUMNS, TRAIN_META_COLUMNS, TRAIN_LABEL_COLUMNS, REFERENCE_COLUMNS, REFERENCE_EXTRA_COLUMNS, reference_to_training
 META_COLUMNS = set(TRAIN_META_COLUMNS) - {"observer", "target_player"}
 
+LEGACY_FEATURES = [name for name in TRAIN_COLUMNS
+                   if name not in META_COLUMNS and name not in TRAIN_LABEL_COLUMNS]
+# 副露の個別データと局・親の情報から復元できる集計列を省く。
+REDUNDANT_FEATURES = {'game_wind', 'hand_number'}
+for seat in range(4):
+    REDUNDANT_FEATURES.update(f'p{seat}_meld_{tile}' for tile in range(1, 38))
+    REDUNDANT_FEATURES.update(
+        f'p{seat}_{kind}_count' for kind in ('chi', 'pon', 'daiminkan', 'ankan', 'kakan', 'nuki')
+    )
+    REDUNDANT_FEATURES.add(f'p{seat}_seat_wind')
+PREDICTION_FEATURES = [name for name in LEGACY_FEATURES if name not in REDUNDANT_FEATURES]
+
+
+def validate_feature_names(names):
+    if names not in (LEGACY_FEATURES, PREDICTION_FEATURES):
+        raise ValueError('モデルの入力列が安全な許可リストと一致しません')
+    return names
+
+
 
 def label_from_csv(row: dict) -> list[float]:
     y = [float(row[f"target_hand_{t}"] or 0) for t in range(1, 35)]
@@ -352,7 +371,9 @@ def main():
     reserved_train,reserved_test=split_game_ids(paths,args.seed)
     train_games={r[0] for r in train}
     if train_games & reserved_test:raise RuntimeError('対局分割の重複があります')
-    x_train = np.asarray([r[3] for r in train],dtype=np.float32)
+    columns = [features.index(name) for name in PREDICTION_FEATURES]
+    x_train = np.asarray([r[3] for r in train],dtype=np.float32)[:, columns]
+    features = PREDICTION_FEATURES
     y_train = np.asarray([r[4] for r in train],dtype=np.float32)
     if not all(np.isfinite(a).all() for a in [x_train,y_train]):raise ValueError('非有限の数値が含まれています')
     upper = remaining_tiles(x_train, features, tf.keras.ops).numpy()
@@ -395,7 +416,7 @@ def main():
         (output/name).write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     print(f'モデル作成完了: {output.resolve()}',flush=True)
     print('次に評価するコマンド:',flush=True)
-    print(f'python moderu_jikko.py --model-dir "{output.resolve()}"',flush=True)
+    print(f'python moderu_jikko.py --action hyoka --model-dir "{output.resolve()}"',flush=True)
 
 
 

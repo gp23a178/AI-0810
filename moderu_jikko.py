@@ -11,12 +11,12 @@ from itertools import groupby
 import zipfile
 from pathlib import Path
 from aite_tehai_gakushu import (BASE_DIR,DATA_DIR,load_samples,sample_indexed_rows,split_game_ids,
-                                format_evaluation,META_COLUMNS,iter_csv_rows,numeric_row,remaining_tiles,label_from_csv,reservoir_add)
+                                format_evaluation,META_COLUMNS,iter_csv_rows,numeric_row,remaining_tiles,label_from_csv,reservoir_add,validate_feature_names)
 from paifu_csv_henkan import TRAIN_COLUMNS,TRAIN_LABEL_COLUMNS
 
 # ==================== 実行設定 ====================
 MODEL_NAME = "shiken_01"  # 実行したいモデル名だけを変更できます
-ACTION = "hyoka"         # "hyoka"=誤差を評価、"yosoku"=1局面の手牌予測
+ACTION = "sannin"         # 既定は他家3人の手牌予測
 
 def training_settings_path(directory):
     path = directory/'gakushu_settei.json'
@@ -95,8 +95,7 @@ def evaluate(args):
     legacy=not config_path.exists()
     config=json.loads((directory/'metrics.json' if legacy else config_path).read_text())
     names=json.loads((directory/'feature_names.json').read_text())
-    expected=[n for n in TRAIN_COLUMNS if n not in META_COLUMNS and n not in TRAIN_LABEL_COLUMNS]
-    if names!=expected:raise ValueError('入力列の許可リストが一致しません')
+    validate_feature_names(names)
     with (directory/'gakushu_games.csv').open(encoding='utf-8-sig',newline='') as f:
         records=list(csv.DictReader(f))
     paths=saved_paths(resolve_csv_root(config['input'], args.input_dir),records)
@@ -118,7 +117,8 @@ def evaluate(args):
     import numpy as np
     import tensorflow as tf
     model=tf.keras.models.load_model(directory/'tehai_yosoku.keras',compile=False)
-    x=np.asarray([r[3] for r in test],dtype=np.float32)
+    full_x=np.asarray([r[3] for r in test],dtype=np.float32)
+    x=full_x[:, [features.index(name) for name in names]]
     y=np.asarray([r[4] for r in test],dtype=np.float32)
     if not np.isfinite(x).all() or not np.isfinite(y).all():raise ValueError('評価データに非有限値があります')
     batch=config['batch_size']
@@ -150,10 +150,10 @@ def evaluate(args):
             raise ValueError('比較モデルの学習対局一覧がありません')
         if set(other_train_ids) & used_ids:
             raise ValueError('比較モデルの訓練対局が今回の評価対局に含まれています')
-        if json.loads((other/'feature_names.json').read_text())!=names:
-            raise ValueError('比較モデルの入力列が一致しません')
+        other_names=validate_feature_names(json.loads((other/'feature_names.json').read_text()))
+        other_x=full_x[:, [features.index(name) for name in other_names]]
         old=tf.keras.models.load_model(other/'tehai_yosoku.keras',compile=False)
-        previous=np.concatenate([old(x[i:i+batch],training=False).numpy() for i in range(0,len(x),batch)])
+        previous=np.concatenate([old(other_x[i:i+batch],training=False).numpy() for i in range(0,len(other_x),batch)])
         if previous.shape!=y.shape or not np.isfinite(previous).all():
             raise ValueError('比較モデルの予測結果が不正です')
         old_mae=float(np.abs(y-previous).mean())
@@ -244,9 +244,7 @@ def evaluate_joint(args):
     config, metrics = saved_info(directory)
     config = config or metrics
     names = json.loads((directory/'feature_names.json').read_text(encoding='utf-8'))
-    expected = [name for name in TRAIN_COLUMNS if name not in META_COLUMNS and name not in TRAIN_LABEL_COLUMNS]
-    if names != expected:
-        raise ValueError('入力列の許可リストが一致しません')
+    validate_feature_names(names)
     test_ids = set(config['test_game_ids'])
     if test_ids & set(config['train_game_ids']):
         raise ValueError('学習対局と評価対局が重複しています')
@@ -351,23 +349,33 @@ def prediction_rows(args):
     config_file = training_settings_path(model_dir)
     config = json.loads((config_file if config_file.exists() else model_dir/'metrics.json').read_text())
     names = json.loads((model_dir/'feature_names.json').read_text())
-    expected = [n for n in TRAIN_COLUMNS if n not in META_COLUMNS and n not in TRAIN_LABEL_COLUMNS]
-    if names != expected:
-        raise ValueError('モデルの入力列が現在の安全な許可列と一致しません')
+    validate_feature_names(names)
     root = resolve_csv_root(config['input'], args.input_dir)
     if args.game_id or args.input_dir:
         index = root/'selected_games.csv'
         gid = args.game_id
     else:
         index = model_dir/'gakushu_games.csv'
-        gid = config['test_game_ids'][0]
+        gid = None if args.action == 'sannin' else config['test_game_ids'][0]
     with index.open(encoding='utf-8-sig', newline='') as file:
-        record = next((r for r in csv.DictReader(file) if gid is None or r['game_id'] == gid), None)
+        records = csv.DictReader(file)
+        if gid is None and args.action == 'sannin':
+            eligible = set(config['test_game_ids'])
+            candidates = [r for r in records if r['game_id'] in eligible]
+            record = secrets.choice(candidates) if candidates else None
+        else:
+            record = next((r for r in records if gid is None or r['game_id'] == gid), None)
     if record is None:
         raise ValueError(f'指定した対局が一覧にありません: {gid}')
     gid = record['game_id']
     paths = saved_paths(root, [record])
     # 1局面を観測席ごとに3行へ展開する既存の並びを利用する。
+    if args.state_index is None:
+        with paths[0][0].open(encoding='utf-8-sig', newline='') as file:
+            discards = [i for i, row in enumerate(csv.DictReader(file)) if int(row['action']) == 2]
+        if not discards:
+            raise ValueError(f'打牌直後の局面がありません: {gid}')
+        args.state_index = secrets.choice(discards)
     start = 3 * args.observer
     positions = {gid: {args.state_index: set(range(start, start + 3))}}
     rows = list(iter_csv_rows(paths, positions))
@@ -386,6 +394,9 @@ def load_predictions(model_dir, values):
     os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
     import numpy as np
     import tensorflow as tf
+
+    for gpu in tf.config.list_physical_devices('GPU'):
+        tf.config.experimental.set_memory_growth(gpu, True)
 
     x = np.asarray(values, dtype=np.float32)
     if not np.isfinite(x).all():
@@ -420,17 +431,42 @@ def predict_three(args):
     action_names = {0: '配牌', 1: 'ツモ', 2: '打牌', 3: '鳴き', 4: 'リーチ', 5: 'ドラ追加'}
     event = action_names.get(rows[0]['action'], str(rows[0]['action']))
     print(f'対局 {gid} ／ 局面 {args.state_index}（{event}） ／ 自分の席 {args.observer}')
-    print('予測枚数が多い順に表示します。数値の単位は枚です。')
+    print(f'相手ごとに上位{args.top}牌種を表示します。')
+    actual_hands = np.asarray([label_from_csv(row) for row in rows]) if args.show_answer else None
+    estimates = allocation if allocation is not None else scores
+    if actual_hands is not None:
+        print('誤差は上位候補だけでなく、全34牌種の枚数で計算します。')
     for i, row in enumerate(rows):
         print(f"\n相手の席 {row['target_player']}")
-        actual = label_from_csv(row) if args.show_answer else None
-        candidates = [t for t in np.argsort(-scores[i], kind='stable') if remaining[t] > 0]
-        for t in candidates[:args.top]:
+        actual = actual_hands[i] if actual_hands is not None else None
+        counts = estimates[i]
+        candidates = [t for t in np.argsort(-scores[i], kind='stable') if counts[t] > 0][:args.top]
+        for t in candidates:
             answer = f' ／ 実際 {actual[t]:.0f}枚' if actual is not None else ''
-            print(f'  {TILE_NAMES[t]}  {scores[i, t]:.3f}枚{answer}')
+            count = str(int(counts[t])) if allocation is not None else f'{counts[t]:.3f}'
+            print(f'  {TILE_NAMES[t]}  推定 {count}枚{answer}')
+
+        if actual is not None:
+            answer_hand = ' '.join(f'{tile}×{int(n)}' for tile, n in zip(TILE_NAMES, actual) if n)
+            print(f'  正解の伏せ牌（{int(actual.sum())}枚）  {answer_hand}')
+            if allocation is not None:
+                estimated_hand = ' '.join(f'{tile}×{n}' for tile, n in zip(TILE_NAMES, counts) if n)
+                matches = int(np.minimum(counts, actual).sum())
+                print(f'  推定の伏せ牌（{counts.sum()}枚）  {estimated_hand}')
+                print(f'  一致枚数 {matches}/{int(actual.sum())}枚')
+            hits = sum(actual[t] > 0 for t in candidates)
+            if candidates:
+                print(f'  上位候補の的中 {hits}/{len(candidates)}牌種')
+            error = counts - actual
+            print(f'  MAE {np.abs(error).mean():.3f}枚 ／ RMSE {np.sqrt(np.square(error).mean()):.3f}枚')
+
+    if actual_hands is not None:
+        error = estimates - actual_hands
+        print(f'\n3人合計の評価（この局面）')
         if allocation is not None:
-            hand = ' '.join(f'{name}×{count}' for name, count in zip(TILE_NAMES, allocation[i]) if count)
-            print(f'  3人の残り枚数を共有した推定手牌  {hand}')
+            matches = int(np.minimum(estimates, actual_hands).sum())
+            print(f'  一致枚数 {matches}/{int(actual_hands.sum())}枚')
+        print(f'  MAE {np.abs(error).mean():.3f}枚 ／ RMSE {np.sqrt(np.square(error).mean()):.3f}枚')
 
 
 def saved_info(directory):
@@ -508,8 +544,8 @@ def predict(args):
             raise ValueError('持ち帰り用には固定の予測サンプルだけが含まれます')
         sample=json.loads((model_dir/'sample.json').read_text(encoding='utf-8'))
         names=json.loads((model_dir/'feature_names.json').read_text(encoding='utf-8'))
-        expected=[n for n in TRAIN_COLUMNS if n not in META_COLUMNS and n not in TRAIN_LABEL_COLUMNS]
-        if names!=expected or len(sample['x'])!=len(names):
+        validate_feature_names(names)
+        if len(sample['x'])!=len(names):
             raise ValueError('サンプルの入力列が一致しません')
         values=sample['x']
     else:
@@ -543,13 +579,14 @@ def main():
     parser.add_argument('--test-games',type=int,help='未学習対局から抽出する対局数')
     parser.add_argument('--test-rows',type=int,help='通常評価で抽出する行数')
     parser.add_argument('--cases',type=int,default=256,help='同時推定の評価局面数')
-    parser.add_argument('--state-index',type=int,default=30)
+    parser.add_argument('--state-index',type=int,help='局面番号。3人予測では省略時に打牌直後から抽出')
     parser.add_argument('--observer',type=int,choices=range(4),default=0)
     parser.add_argument('--target',type=int,choices=range(4),default=1)
     parser.add_argument('--game-id',help='予測する対局ID')
     parser.add_argument('--input-dir',type=Path,help='評価・予測に使う変換先フォルダ')
     parser.add_argument('--top',type=int,choices=range(1,35),default=10,metavar='1..34')
-    parser.add_argument('--show-answer',action='store_true')
+    parser.add_argument('--show-answer', action=argparse.BooleanOptionalAction,
+                        help='正解と誤差を表示。3人予測では既定で表示')
     args=parser.parse_args()
     name=args.name or MODEL_NAME
     if Path(name).name!=name or name in ('.','..') or '\\' in name:
@@ -562,7 +599,14 @@ def main():
         parser.error(f'モデルがありません: {args.model_dir}')
     if args.test_rows is not None and args.test_rows<1:parser.error('--test-rowsは1以上です')
     if args.test_games is not None and args.test_games<1:parser.error('--test-gamesは1以上です')
-    if args.state_index<0:parser.error('state-indexは0以上です')
+    if args.state_index is not None and args.state_index < 0:
+        parser.error('state-indexは0以上です')
+    if args.action == 'sannin' and (args.model_dir/'sample.json').is_file():
+        args.action = 'yosoku'
+    if args.show_answer is None:
+        args.show_answer = args.action == 'sannin'
+    if args.state_index is None and args.action != 'sannin':
+        args.state_index = 30
     if args.action=='info' or (args.action=='hyoka' and (args.model_dir/'sample.json').is_file()):
         show_info(args)
     elif args.action=='hyoka':

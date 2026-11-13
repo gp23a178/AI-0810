@@ -72,7 +72,7 @@ Lの設定を使用します。ほかの数値・CSV保存先は冒頭の設定�
 ## 5．そのモデルを実行して評価する
 
 ```bash
-python moderu_jikko.py --name shiken_01
+python moderu_jikko.py --name shiken_01 --action hyoka
 ```
 
 モデル名を変えるだけで別モデルを評価できます。
@@ -278,3 +278,33 @@ python moderu_jikko.py --name miekazu_01 --action sannin --state-index 30
 ```
 
 infoはPythonだけで保存済み結果を表示します。予測や評価にはTensorFlowとNumPyが必要です。大容量のCSVを持ち帰らない場合は、自宅用ZIPを使います。
+
+
+## 整理した400項目で他家3人を予測する
+
+新しく学習するモデルでは、既存CSVから400項目を選びます。副露の牌種別集計と種類別回数、四人麻雀で使わない抜き回数、局・親の情報から求められる場風・局番号・自風を入力から外しました。副露の明細と総数、自分の手牌、公開牌、河、点数、行動情報を使います。相手の伏せ牌は学習の正解に使います。従来の578項目のモデルも、保存済みの列順で実行できます。
+
+```bash
+cd ~/WSL/AI-0810
+source ~/WSL/venv/bin/activate
+python aite_tehai_gakushu.py --mode l --name sannin_01
+python moderu_jikko.py --name sannin_01 --action sannin --observer 0 --state-index 30 --top 5
+```
+
+別の対局は `--game-id` で指定します。打牌直後には残り牌を3人で共有した推定手牌も表示します。400項目への変更による精度差は、同じ評価行で確認します。
+
+```bash
+python moderu_jikko.py --name sannin_01 --action hyoka --compare miekazu_01 --eval-seed 42
+```
+
+比較コマンドは両モデルの学習対局が評価に含まれていないことを検査します。
+
+
+## 既定の3人予測
+
+    python moderu_jikko.py --name sannin_01
+
+評価用牌譜から対局と打牌直後の局面をランダムに選び、3人で残り牌を共有して割り当てた候補を表示します。
+対局と局面を固定するには `--game-id` と `--state-index` を指定します。同じ入力のモデル予測は再現できます。
+指定した局面が打牌直後以外の場合は、各人の予測枚数を表示します。
+性能評価は `--action hyoka` を指定します。

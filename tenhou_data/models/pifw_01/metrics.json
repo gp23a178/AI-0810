@@ -1,0 +1,10 @@
+{
+  "model_mae": 0.4584738612174988,
+  "uniform_expected_mae": 0.4656321406364441,
+  "allocation_cases": 256,
+  "mean_matched_tiles_per_opponent": {
+    "uniform": 3.8997395833333335,
+    "proportional": 5.428385416666667,
+    "joint": 5.528645833333333
+  }
+}

@@ -1,10 +1,11 @@
-# 天鳳AI 操作ガイド（Pythonは4本）
+# 天鳳AI 操作ガイド
 
 | ファイル | 役割 |
 |---|---|
 | paifu_ikkatsu_hozon.py | 天鳳から牌譜ZIPを一括保存 |
 | paifu_csv_henkan.py | MJLOGを451列の通常CSVへ変換。並列・途中再開に対応 |
 | aite_tehai_gakushu.py | 冒頭でパラメータを設定し、名前付きTensorFlowモデルを構築 |
+| tehai_moderu_seisei.py | Lモードで相手手牌推定モデルを学習（既定名 miekazu_02） |
 | moderu_jikko.py | モデル名を指定して評価、または1局面の予測を実行 |
 
 ## 準備
@@ -79,7 +80,7 @@ python moderu_jikko.py --name shiken_01
 例：既存のjikken_02は `python moderu_jikko.py --name jikken_02`。
 冒頭のMODEL_NAMEを変えてから `python moderu_jikko.py` だけで実行することもできます。
 
-最後にMAE、平均予測MAE、改善幅、削減率、MSE、RMSEを表示します。
+端末にはモデルMAE、平均予測MAE、誤差削減率、保有ありのF1を表示します。
 評価結果はモデル内のhyoka/metrics.jsonに保存します。
 評価は保存時に確保した未学習の対局を使い、再学習はしません。
 後で学習ファイルの数値を変えても、そのモデルの保存済み評価条件は変わりません。
@@ -232,22 +233,21 @@ python moderu_jikko.py --name miekazu_01 --action douji --cases 256
 
 ## 好きな局面で他家3人の候補牌を表示する
 
-モデルは自分で学習して名前を付けます。既存CSVを再利用できます。
+既存CSVを使って新しいモデルを学習できます。既定の保存名は miekazu_02 です。別名で学習する場合は --name を指定します。
 
 ```bash
-python aite_tehai_gakushu.py --mode l --name watashi_01
-python moderu_jikko.py --name watashi_01 --action sannin --observer 0 --state-index 30 --top 5
+python tehai_moderu_seisei.py
+python moderu_jikko.py --name miekazu_02 --action sannin --observer 0 --min-probability 40
 ```
 
-observerは自分の席番号（0～3）、state-indexは対局内の局面番号（0始まり）、topは相手1人あたりの表示牌種数です。対局IDの省略時は保存済みの最初の評価対局を読みます。
+observerは自分の席番号（0～3）、state-indexは対局内の局面番号（0始まり）です。局面番号を指定した場合は、その局面を使います。局面番号を省略すると、残りツモが40枚以下の打牌直後からランダムに選びます。対局IDを指定した場合はその対局内、省略した場合は保存済みの評価対局から選びます。残りツモ数は `--min-remaining` と `--max-remaining`、局面番号は `--min-state-index` と `--max-state-index` で範囲を指定できます。固定局面を指定する場合も、明示した範囲の条件を満たす必要があります。同じランダム選択を再現するには `--eval-seed` を指定します。
 
 ```bash
-python moderu_jikko.py --name watashi_01 --action sannin --game-id 2011020613gm-00a9-0000-3774f8d1 --observer 2 --state-index 100 --top 5
+python moderu_jikko.py --name miekazu_02 --action sannin --observer 0 --min-remaining 10 --max-remaining 35 --min-state-index 60 --max-state-index 300 --min-probability 45 --max-probability 65
 ```
 
 対局IDは変換先のselected_games.csvにあります。別の変換フォルダを使う場合は --input-dir で指定します。
-候補順位は予測保有枚数に基づきます。打牌直後は3人の残り枚数を共有した整数の推定手牌も表示します。
---show-answer を付けると候補牌の実際の枚数を比較用に表示します。
+各相手の正解と予想の伏せ牌を表示します。「その相手が1枚以上持つ」推定確率が40%以上の牌を、確率の高い順にすべて表示します。`--min-probability 45 --max-probability 65` なら45〜65%の範囲です。確率の上限だけを指定した場合、下限は1%です。各範囲は境界値を含みます。`--top 5` を指定した場合は、基準を満たす牌種のうち、各相手の上位5種類まで表示します。残りが r 枚でモデルの予測枚数が m 枚の場合、各1枚の保有を独立と仮定し、確率を 1 − (1 − m/r)^r と近似します。残り0枚の場合は0%です。表示枚数は予測枚数を四捨五入し、候補に選ばれた牌は最低1枚とします。的中率は表示した予想枚数に対する一致枚数の割合です。同じ牌は正解と予想の少ない方の枚数まで一致と数えます。3人で残り枚数を共有する配分の評価には --action douji を使います。
 この機能は変換済み牌譜の局面を対象にします。持ち帰り用ZIPの固定サンプルでは従来の --action yosoku を使用します。
 
 
@@ -257,14 +257,14 @@ python moderu_jikko.py --name watashi_01 --action sannin --game-id 2011020613gm-
 python moderu_jikko.py --name miekazu_01 --action hyoka
 ```
 
-評価専用に確保した対局から毎回新しいseedで行を重複なしで抽出します。既定の行数上限はモデル保存時の設定です。評価対局自体も減らして抽出する場合は `--test-games`、行数を変える場合は `--test-rows` を指定します。
+評価専用に確保した対局のうち、残りツモが40枚以下の局面から毎回新しいseedで行を重複なしで抽出します。`--min-remaining 10 --max-remaining 35` のように残りツモ数の範囲を指定できます。`--max-remaining 70` で全局面を対象にします。既定の行数上限はモデル保存時の設定です。評価対局自体も減らして抽出する場合は `--test-games`、行数を変える場合は `--test-rows` を指定します。
 
 ```bash
 python moderu_jikko.py --name miekazu_01 --action hyoka --test-games 4 --test-rows 3000 --eval-seed 42
 ```
 
 同じモデル・元データ・抽出条件でseedを固定すると同じ行を再現します。比較対象を `--compare jikken_02` で指定すると両モデルを同じ行で評価します。学習対局との重複を検査します。
-結果は `hyoka/metrics.json` に保存され、端末にはMAE、MSE、RMSE、枚数一致率、保有ありの適合率・再現率・F1などが出ます。後半4指標は予測枚数を四捨五入した値で計算します。枚数一致率には0枚同士の一致も含みます。
+詳細な指標は `hyoka/metrics.json` に保存します。保有ありのF1は推定確率が `--min-probability` 以上の全牌種から計算します。 `--action douji` も指定した残りツモ数の範囲内の打牌を対象にします。
 `--action douji` でも `--eval-seed` と `--test-games` を使用できます。評価する局面の上限は `--cases` で指定します。
 
 
@@ -274,7 +274,58 @@ python moderu_jikko.py --name miekazu_01 --action hyoka --test-games 4 --test-ro
 
 ```bash
 python moderu_jikko.py --name miekazu_01 --action info
-python moderu_jikko.py --name miekazu_01 --action sannin --state-index 30
+python moderu_jikko.py --name miekazu_01 --action sannin
 ```
 
 infoはPythonだけで保存済み結果を表示します。予測や評価にはTensorFlowとNumPyが必要です。大容量のCSVを持ち帰らない場合は、自宅用ZIPを使います。
+
+
+## PIFWの4人麻雀で他家3人の手牌を継続推定する
+
+学習済みモデルは `tenhou_data/models/pifw_02/` にあります。配牌後から終局前まで、指定した席の視点で推論できます。自分の手番以外も対象です。PIFWの自動ツモなど、一つの着手コマンド内に複数の処理がある場合は、コマンド確定後に観測します。
+
+情報源は、自分の手牌、4人の河・副露・立直・伏せ牌の枚数、公開ドラ表示牌です。他家がツモった牌の種類や山の中身は入力に含めません。鳴かれた打牌は河から除き、副露で1回だけ数えます。牌種は1〜34で、天鳳の赤牌は通常の5に合算します。
+
+### 対局中の公開情報が変わるたびに予測する
+
+PIFWのローカルコンソールで `mahjong_watch 2P` を実行すると2P視点の観測が始まります。観測が変わるたびにPIFWがJSONを1行出力し、`--stream` は学習済みモデルを一度読み込んで順に予測します。
+
+```bash
+cd ~/WSL/AI-0810
+source ~/WSL/venv/bin/activate
+
+{
+  printf '%s\n' \
+    'mahjong_watch 2P' \
+    'clear_board gm 9 bs 1 1 pn 4 fp 0 ai 2 lv 1 dp 1 mo 0 md 2'
+  while IFS= read -r command
+  do
+    printf '%s\n' "$command"
+    [ "$command" = quit ] && break
+  done
+} | (cd ~/AI-1009/pifw_engine && bin/pifw -ncsx) \
+  | sed -un '/^{"schema":"pifw-mahjong-observation-v2",/p' \
+  | python pifw_tehai_yosoku.py --stream --allocation joint
+```
+
+この例では先手は1Pで、観測席は2Pです。最初の予測に続けて、同じ端末に `genmove 1P` を入力すると先手のAI着手を進めます。`play` で手動着手もできます。`quit` で終了します。別端末でソースからエンジンを作るには `(cd ~/AI-1009/pifw_engine && make -j4)` を実行します。Unity上での表示や打牌AIによる利用には、呼び出し側の接続が必要です。
+
+1局面だけ取得するコマンドは `mahjong_public_observation 2P` です。そのJSONを `python pifw_tehai_yosoku.py` の標準入力に渡すか、`--input` でファイルを指定できます。出力の席番号は0始まりです。
+
+`expected_counts` は相手ごとの34牌種の期待枚数です。たとえば `0.8` は期待0.8枚を表します。`assigned_counts` は、その時点の各相手の伏せ牌枚数と、3人が共有する残り牌の上限を満たす整数の仮手牌です。`unassigned_counts` は配らなかった未見牌です。入力の `concealed_sizes` には、各席のツモによる増加や副露による減少が反映されます。
+
+### 再評価と特徴量の変更
+
+```bash
+python pifw_moderu_seisei.py evaluate --name pifw_02
+python pifw_moderu_seisei.py train --name pifw_02_recent --features recent --seed 42 --epochs 12
+```
+
+再評価では保存済みの評価用対局を使い、全体とイベント別のMAEを表示します。`counts` は牌種別枚数を中心とした390特徴量です。`recent` は河に残る直近3枚の順序を加えた798特徴量です。学習した別モデルは `--model-dir` で指定できます。旧版 `pifw_01` は従来の自分の打牌前の局面で利用できます。
+
+- `--allocation joint` はモデルの期待枚数に沿うよう3人分を同時配分します。
+- `--allocation proportional` は同じ配分処理に残り牌比例の期待枚数を渡します。
+- `--allocation uniform --seed 42` は未見牌を重複なしで無作為配分します。
+- `--allocation none` は期待枚数だけを出します。
+
+特徴量は `pifw_tehai_yosoku.py` の `encode_observation`、ネットワークは `pifw_moderu_seisei.py` の `build_model`、仮手牌の配分は `pifw_tehai_yosoku.py` の `assign_hands` で変更できます。Pythonから複数局面で予測するときは `HandPredictor` を一度作って `predict` を呼び出します。SavedModelの `serving_default` は `float32` の `features` を受け取り、`expected_counts` を返します。特徴量の順序は `model.json` に保存しています。

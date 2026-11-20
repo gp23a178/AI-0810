@@ -132,7 +132,7 @@ def select_csvs(directory, mode, seed, players_override=None, max_games_override
     return paths, selected_players, games
 
 
-def iter_csv_rows(paths, samples=None, *, action=None):
+def iter_csv_rows(paths, samples=None, *, action=None, min_remaining=0, max_remaining=None):
     from itertools import zip_longest
     for path,meta_path,info in paths:
         positions = samples[info['game_id']] if samples is not None else None
@@ -146,7 +146,12 @@ def iter_csv_rows(paths, samples=None, *, action=None):
             for index,(ref,aux) in enumerate(zip_longest(reader,extra)):
                 if ref is None or aux is None or int(aux['state_index'])!=index:
                     raise ValueError(f'参照CSVと補助CSVの行が一致しません: {path}')
+                if max_index is not None and index > max_index:
+                    break
                 if action is not None and int(ref['action']) != action:
+                    continue
+                remaining = int(ref['remain_tsumo'])
+                if remaining < min_remaining or (max_remaining is not None and remaining > max_remaining):
                     continue
                 if positions is None:
                     yield from reference_to_training(ref,aux,info)
@@ -204,20 +209,42 @@ def load_indexed_samples(paths, cap, seed, split):
     return sample_indexed_rows(subset, cap, seed)
 
 
-def sample_indexed_rows(subset, cap, seed):
-    """渡された対局だけから行を重複なしで抽出する。"""
+def sample_indexed_rows(subset, cap, seed, *, min_remaining=0, max_remaining=None):
+    """渡された対局の条件に合う局面から行を重複なしで抽出する。"""
     from bisect import bisect_right
     from itertools import accumulate
 
-    counts = [12 * int(info['training_rows']) for _, _, info in subset]
-    if not counts or min(counts) <= 0:
+    state_counts = [int(info['training_rows']) for _, _, info in subset]
+    if not state_counts or min(state_counts) <= 0:
         raise ValueError('保存済みの局面数を確認してください')
-    offsets = [0, *accumulate(counts)]
+
+    eligible_states = [range(count) for count in state_counts]
+    if min_remaining or max_remaining is not None:
+        upper = 70 if max_remaining is None else max_remaining
+        eligible_states = []
+        for (path, _, _), count in zip(subset, state_counts):
+            with path.open(encoding='utf-8-sig', newline='') as file:
+                reader = csv.DictReader(file)
+                if reader.fieldnames != REFERENCE_COLUMNS:
+                    raise ValueError(f'CSVの列構造が一致しません: {path}')
+                states = []
+                seen = 0
+                for seen, row in enumerate(reader, start=1):
+                    if min_remaining <= int(row['remain_tsumo']) <= upper:
+                        states.append(seen - 1)
+                if seen != count:
+                    raise ValueError(f'CSVの局面数が保存済み一覧と一致しません: {path}')
+            eligible_states.append(states)
+
+    offsets = [0, *accumulate(12 * len(states) for states in eligible_states)]
     total = offsets[-1]
+    if total == 0:
+        raise ValueError('残りツモ数の範囲に合う評価局面がありません。--min-remaining と --max-remaining を確認してください')
     samples = {info['game_id']: {} for _, _, info in subset}
     for offset in random.Random(seed).sample(range(total), min(cap, total)):
         game = bisect_right(offsets, offset) - 1
-        state, view = divmod(offset - offsets[game], 12)
+        eligible_index, view = divmod(offset - offsets[game], 12)
+        state = eligible_states[game][eligible_index]
         gid = subset[game][2]['game_id']
         samples[gid].setdefault(state, set()).add(view)
     features = [c for c in TRAIN_COLUMNS if c not in META_COLUMNS and c not in TRAIN_LABEL_COLUMNS]
@@ -273,34 +300,27 @@ def build_model(tf, x_train, feature_names, learning_rate):
 
 
 def format_evaluation(metrics):
-    """端末の最後に表示する評価側の数値。負の改善率もそのまま表示。"""
-    mae=metrics['mae']
-    baseline=metrics['mean_baseline_mae']
-    improvement=baseline-mae
-    rate=improvement/baseline*100 if baseline>0 else None
-    lines=['', '========== 評価結果（未学習の対局） ==========',
-           f'モデル MAE       : {mae:.6f}',
-           f'平均予測 MAE     : {baseline:.6f}',
-           f'MAE 改善幅       : {improvement:+.6f}',
-           f'誤差削減率       : {rate:+.2f}%' if rate is not None else '誤差削減率       : 算出不可（平均予測MAEが0）']
-    if 'mse' in metrics:lines.append(f'モデル MSE       : {metrics["mse"]:.6f}')
-    if 'rmse' in metrics:lines.append(f'モデル RMSE      : {metrics["rmse"]:.6f}')
-    for key,label in (
-        ('count_accuracy', '枚数一致率'),
-        ('presence_precision', '保有ありの適合率'),
-        ('presence_recall', '保有ありの再現率'),
-        ('presence_f1', '保有ありのF1'),
-    ):
-        if key in metrics:
-            value = metrics[key]
-            lines.append(f'{label}: {value:.2%}' if value is not None else f'{label}: 算出不可')
-    lines+=['============================================']
+    """端末に表示する評価指標。詳細な評価値は保存ログで確認できる。"""
+    mae = metrics['mae']
+    baseline = metrics['mean_baseline_mae']
+    reduction = f'{(baseline - mae) / baseline:+.2%}' if baseline > 0 else '算出不可'
+    lines = [
+        '',
+        '========== 評価結果（未学習の対局） ==========',
+        f'モデル MAE       : {mae:.6f}',
+        f'平均予測 MAE     : {baseline:.6f}',
+        f'誤差削減率       : {reduction}',
+    ]
+    if 'presence_f1' in metrics:
+        f1 = metrics['presence_f1']
+        lines.append(f'保有ありのF1     : {f1:.2%}' if f1 is not None else '保有ありのF1     : 算出不可')
+    lines.append('============================================')
     return '\n'.join(lines)
 
 
-def main():
+def main(*, default_mode=MODE, default_name=MODEL_NAME):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", type=str.upper, choices=["S", "M", "L"], default=str(MODE).upper())
+    parser.add_argument("--mode", type=str.upper, choices=["S", "M", "L"], default=default_mode.upper())
     parser.add_argument("--max-train", type=int)
     parser.add_argument("--max-test", type=int)
     parser.add_argument("--epochs", type=int, default=EPOCHS)
@@ -327,7 +347,7 @@ def main():
     if args.name and (Path(args.name).name!=args.name or args.name in ('.','..') or '\\' in args.name):
         parser.error('--nameにはフォルダを含まない名前を指定してください')
     if args.name and args.output_dir:parser.error('--nameと--output-dirはどちらか一方を指定してください')
-    output = args.output_dir or DATA_DIR/"models"/(args.name or MODEL_NAME)
+    output = args.output_dir or DATA_DIR/"models"/(args.name or default_name)
     if not (source/"summary.json").is_file():
         parser.error(f"全件CSVがありません: {source}。先に python paifu_csv_henkan.py で変換してください")
     if (output/'tehai_yosoku.keras').exists():

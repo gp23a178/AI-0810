@@ -17,6 +17,8 @@ from paifu_csv_henkan import TRAIN_COLUMNS,TRAIN_LABEL_COLUMNS
 # ==================== 実行設定 ====================
 MODEL_NAME = "shiken_01"  # 実行したいモデル名だけを変更できます
 ACTION = "hyoka"         # "hyoka"=誤差を評価、"yosoku"=1局面の手牌予測
+DEFAULT_MAX_REMAINING = 40
+DEFAULT_MIN_PROBABILITY = 40.0  # パーセント
 
 def training_settings_path(directory):
     path = directory/'gakushu_settei.json'
@@ -70,13 +72,20 @@ def choose_evaluation_games(args, paths):
     return ordered, seed
 
 
-def count_metrics(actual, predicted):
-    """四捨五入した枚数から牌種単位の一致率とマイクロF1を計算。"""
+def presence_probability(predicted, remaining):
+    """残り牌1枚ごとの保有を独立と仮定し、1枚以上持つ確率を近似する。"""
+    import numpy as np
+
+    per_copy = np.clip(predicted / np.maximum(remaining, 1), 0, 1)
+    return 1 - np.power(1 - per_copy, remaining)
+
+
+def count_metrics(actual, predicted, predicted_has_tile):
+    """枚数一致率と、指定の確率基準に基づく牌種単位のマイクロF1を計算。"""
     import numpy as np
 
     rounded = np.floor(predicted + 0.5)
     actual_has_tile = actual > 0
-    predicted_has_tile = rounded > 0
     true_positive = int(np.count_nonzero(actual_has_tile & predicted_has_tile))
     actual_positive = int(np.count_nonzero(actual_has_tile))
     predicted_positive = int(np.count_nonzero(predicted_has_tile))
@@ -106,7 +115,10 @@ def evaluate(args):
     cap_test = args.test_rows if args.test_rows is not None else saved_cap
     held_out = [path for path in paths if path[2]['game_id'] in test_ids]
     selected, eval_seed = choose_evaluation_games(args, held_out)
-    features,test,nv = sample_indexed_rows(selected,cap_test,eval_seed)
+    max_remaining = None if args.max_remaining == 70 else args.max_remaining
+    features, test, nv = sample_indexed_rows(
+        selected, cap_test, eval_seed, min_remaining=args.min_remaining, max_remaining=max_remaining
+    )
     # 旧モデルの比較基準だけ、当時の訓練行抽出で再現する。
     train = []
     if legacy:
@@ -136,9 +148,12 @@ def evaluate(args):
                  eval_seed=eval_seed, requested_test_rows=cap_test, requested_test_games=args.test_games,
                  game_overlap=0,seed=config['seed'],input=config['input'],
                  evaluated_saved_model=True,legacy_sampling_reproduced=legacy)
-    metrics.update(count_metrics(y, predicted))
+    upper = remaining_tiles(x, names, tf.keras.ops).numpy()
+    probabilities = presence_probability(predicted, upper)
+    metrics.update(count_metrics(y, predicted, probabilities >= args.min_probability / 100))
+    metrics.update(min_remaining=args.min_remaining, max_remaining=args.max_remaining,
+                   min_probability_percent=args.min_probability)
     if config.get('architecture')=='visible_tile_model':
-        upper=remaining_tiles(x,names,tf.keras.ops).numpy()
         if (y>upper).any() or (predicted>upper+1e-6).any() or (predicted<0).any():
             raise ValueError('見えている牌の枚数から計算した上限と矛盾があります')
         metrics['tile_bounds_verified']=True
@@ -165,9 +180,14 @@ def evaluate(args):
     out.mkdir(parents=True,exist_ok=True)
     (out/'metrics.json').write_text(json.dumps(metrics,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     with (out/'validation_examples.csv').open('w',encoding='utf-8',newline='') as f:
-        w=csv.writer(f);w.writerow(['game_id','observer','target_player','actual_counts','predicted_counts'])
-        for record,yp in zip(test[:20],predicted[:20]):w.writerow([*record[:3],json.dumps(record[4]),json.dumps(yp.tolist())])
+        writer = csv.writer(f)
+        writer.writerow(['game_id', 'observer', 'target_player', 'remain_tsumo', 'actual_counts', 'predicted_counts'])
+        remaining_index = features.index('remain_tsumo')
+        for record, prediction in zip(test[:20], predicted[:20]):
+            writer.writerow([*record[:3], int(record[3][remaining_index]),
+                             json.dumps(record[4]), json.dumps(prediction.tolist())])
     print(f'モデル: {directory.name} / 評価: {len(test)}行・{len(used_ids)}対局',flush=True)
+    print(f'評価条件: 残りツモ {args.min_remaining}〜{args.max_remaining}枚 / F1の保有判定: 推定確率 {args.min_probability:g}%以上')
     print(f'評価seed: {eval_seed}')
     if len(test)==nv:
         print('選択した対局の全行が評価対象です。抽出し直すには --test-rows を減らしてください。')
@@ -262,14 +282,16 @@ def evaluate_joint(args):
     def case_key(row):
         return row['game_id'], row['state_index'], row['observer']
 
-    for key, group in groupby(iter_csv_rows(paths, action=2), key=case_key):
+    eligible_rows = iter_csv_rows(paths, action=2, min_remaining=args.min_remaining,
+                                  max_remaining=args.max_remaining)
+    for key, group in groupby(eligible_rows, key=case_key):
         rows = list(group)
         if len(rows) != 3 or {r['target_player'] for r in rows} != (set(range(4)) - {key[2]}):
             raise ValueError(f'他家3席が揃っていません: {key}')
         seen += 1
         reservoir_add(cases, (key, rows), seen, args.cases, rng)
     if not cases:
-        raise ValueError('評価対局に打牌直後の局面がありません')
+        raise ValueError('残りツモ数の条件に合う打牌直後の局面がありません。--max-remaining を増やしてください')
 
     os.environ.setdefault('KERAS_HOME', str(BASE_DIR/'.keras'))
     os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
@@ -325,6 +347,8 @@ def evaluate_joint(args):
     report = summarize(per_case)
     report['test_game_ids'] = sorted(test_ids)
     report['available_cases'] = seen
+    report['min_remaining'] = args.min_remaining
+    report['max_remaining'] = args.max_remaining
     report['eval_seed'] = eval_seed
     report['selected_test_game_ids'] = [p[2]['game_id'] for p in paths]
     report['per_game'] = {gid: summarize([row for row in per_case if row['game_id'] == gid])
@@ -336,7 +360,7 @@ def evaluate_joint(args):
         writer = csv.DictWriter(file, fieldnames=list(per_case[0]))
         writer.writeheader()
         writer.writerows(per_case)
-    print(f'評価: {len(per_case)}局面・{len(report["per_game"])}対局')
+    print(f'評価: {len(per_case)}局面・{len(report["per_game"])}対局（残りツモ {args.min_remaining}〜{args.max_remaining}枚）')
     for method, label in zip(methods, ('残り牌のみ', '個別推定', '3人同時推定')):
         scores = report[method]
         print(f'{label}: 一致 {scores["matched_tiles_per_hand"]:.3f}枚/人、'
@@ -344,6 +368,26 @@ def evaluate_joint(args):
     print(f'同時推定の増減: {report["joint_gain_per_hand"]:+.3f}枚/人')
     print(f'評価seed: {eval_seed}')
     print(f'評価結果: {out.resolve()}')
+
+
+def random_answer_position(root, records, args):
+    """対局と打牌直後の局面を、公開情報だけから選ぶ。"""
+    rng = random.Random(args.eval_seed)
+    records = list(records)
+    rng.shuffle(records)
+    for record in records:
+        path, = saved_paths(root, [record])
+        with path[0].open(encoding='utf-8-sig', newline='') as file:
+            eligible = [
+                index for index, row in enumerate(csv.DictReader(file))
+                if index >= args.min_state_index
+                and (args.max_state_index is None or index <= args.max_state_index)
+                and int(row['action']) == 2
+                and args.min_remaining <= int(row['remain_tsumo']) <= args.max_remaining
+            ]
+        if eligible:
+            return path, rng.choice(eligible)
+    raise ValueError('指定した局面番号・残りツモ数の範囲に合う打牌直後の局面がありません')
 
 
 def prediction_rows(args):
@@ -355,22 +399,38 @@ def prediction_rows(args):
     if names != expected:
         raise ValueError('モデルの入力列が現在の安全な許可列と一致しません')
     root = resolve_csv_root(config['input'], args.input_dir)
-    if args.game_id or args.input_dir:
-        index = root/'selected_games.csv'
-        gid = args.game_id
-    else:
-        index = model_dir/'gakushu_games.csv'
-        gid = config['test_game_ids'][0]
+    index = root/'selected_games.csv' if args.game_id or args.input_dir else model_dir/'gakushu_games.csv'
     with index.open(encoding='utf-8-sig', newline='') as file:
-        record = next((r for r in csv.DictReader(file) if gid is None or r['game_id'] == gid), None)
-    if record is None:
-        raise ValueError(f'指定した対局が一覧にありません: {gid}')
-    gid = record['game_id']
-    paths = saved_paths(root, [record])
+        records = list(csv.DictReader(file))
+
+    if args.game_id:
+        records = [record for record in records if record['game_id'] == args.game_id]
+    elif args.action == 'sannin':
+        test_ids = config['test_game_ids']
+        records = [record for record in records if record['game_id'] in test_ids]
+        if test_ids:
+            records.sort(key=lambda record: record['game_id'] != test_ids[0])
+    elif not args.input_dir:
+        gid = config['test_game_ids'][0]
+        records = [record for record in records if record['game_id'] == gid]
+    if not records:
+        raise ValueError(f'指定した対局が一覧にありません: {args.game_id}' if args.game_id
+                         else '対局一覧に対象の対局がありません')
+
     # 1局面を観測席ごとに3行へ展開する既存の並びを利用する。
     start = 3 * args.observer
-    positions = {gid: {args.state_index: set(range(start, start + 3))}}
-    rows = list(iter_csv_rows(paths, positions))
+    views = set(range(start, start + 3))
+    rows = []
+    if args.state_index is not None:
+        path, = saved_paths(root, records[:1])
+        gid = path[2]['game_id']
+        rows = list(iter_csv_rows([path], {gid: {args.state_index: views}}))
+
+    else:
+        path, state_index = random_answer_position(root, records, args)
+        gid = path[2]['game_id']
+        rows = list(iter_csv_rows([path], {gid: {state_index: views}}))
+
     if len(rows) != 3 or {r['target_player'] for r in rows} != set(range(4)) - {args.observer}:
         raise ValueError('指定した局面の他家3席が揃っていません。--state-index を確認してください')
     return rows, names, gid
@@ -408,29 +468,47 @@ def predict_three(args):
     import numpy as np
 
     rows, names, gid = prediction_rows(args)
+    state = rows[0]
+    draws_left = int(state['remain_tsumo'])
+    if not args.min_remaining <= draws_left <= args.max_remaining:
+        raise ValueError(f'局面 {args.state_index} は残りツモ{draws_left}枚です。'
+                         f'指定した範囲 {args.min_remaining}〜{args.max_remaining}枚を満たしません')
     scores, x = load_predictions(args.model_dir, [numeric_row(row, names) for row in rows])
     import tensorflow as tf
     remaining = remaining_tiles(x[:1], names, tf.keras.ops).numpy()[0].astype(np.int32)
     # 旧モデルの出力も、公開情報で不可能と分かる牌は候補から外す。
     scores = np.clip(scores, 0, remaining)
-    allocation = None
-    if rows[0]['action'] == 2:
-        sizes = np.array([13 - 3 * int(r[f"p{r['target_player']}_meld_count"]) for r in rows])
-        allocation = allocate_hands(scores, remaining, sizes)
+    probabilities = presence_probability(scores, remaining)
+    lower = args.min_probability / 100
+    upper = args.max_probability / 100
+    eligible = (probabilities >= lower) & (probabilities <= upper)
     action_names = {0: '配牌', 1: 'ツモ', 2: '打牌', 3: '鳴き', 4: 'リーチ', 5: 'ドラ追加'}
-    event = action_names.get(rows[0]['action'], str(rows[0]['action']))
-    print(f'対局 {gid} ／ 局面 {args.state_index}（{event}） ／ 自分の席 {args.observer}')
-    print('予測枚数が多い順に表示します。数値の単位は枚です。')
+    event = action_names.get(state['action'], str(state['action']))
+    print(f'対局 {gid} ／ 局面 {state["state_index"]}（{event}） ／ 自分の席 {args.observer}')
+    limit = f'（各相手の上位{args.top}種類まで）' if args.top is not None else ''
+    probability_range = (f'{args.min_probability:g}%以上' if args.max_probability == 100
+                         else f'{args.min_probability:g}〜{args.max_probability:g}%')
+    print(f'残りツモ {draws_left}枚 ／ 表示基準：保有の推定確率 {probability_range}{limit}')
     for i, row in enumerate(rows):
+        actual = np.asarray(label_from_csv(row), dtype=np.int32)
+        ranked_tiles = np.argsort(-probabilities[i], kind='stable')
+        shown_tiles = ranked_tiles[eligible[i, ranked_tiles]][:args.top]
+        predicted = np.maximum(1, np.floor(scores[i, shown_tiles] + 0.5).astype(np.int32))
+        actual_hand = ' '.join(f'{name}×{count}' for name, count in zip(TILE_NAMES, actual) if count)
+        predicted_hand = ' '.join(
+            f'{TILE_NAMES[tile]}×{count}（{probabilities[i, tile]:.1%}）'
+            for tile, count in zip(shown_tiles, predicted)
+        )
+        total = int(predicted.sum())
+        matched = int(np.minimum(predicted, actual[shown_tiles]).sum())
+        hit_rate = f'{matched / total:.1%}（予想{total}枚中{matched}枚一致）' if total else '算出不可（予想0枚）'
         print(f"\n相手の席 {row['target_player']}")
-        actual = label_from_csv(row) if args.show_answer else None
-        candidates = [t for t in np.argsort(-scores[i], kind='stable') if remaining[t] > 0]
-        for t in candidates[:args.top]:
-            answer = f' ／ 実際 {actual[t]:.0f}枚' if actual is not None else ''
-            print(f'  {TILE_NAMES[t]}  {scores[i, t]:.3f}枚{answer}')
-        if allocation is not None:
-            hand = ' '.join(f'{name}×{count}' for name, count in zip(TILE_NAMES, allocation[i]) if count)
-            print(f'  3人の残り枚数を共有した推定手牌  {hand}')
+        print(f'正解の手牌：{actual_hand or "なし"}')
+        if not predicted_hand:
+            highest = probabilities[i].max()
+            predicted_hand = f'基準を満たす牌なし（最高推定確率 {highest:.1%}）'
+        print(f'予想された手牌：{predicted_hand}')
+        print(f'予想的中率：{hit_rate}')
 
 
 def saved_info(directory):
@@ -454,6 +532,9 @@ def show_info(args):
             print(f'{label}: {values[key]}')
     if 'mae' in metrics:
         print('保存済みの評価結果')
+        if 'max_remaining' in metrics and 'min_probability_percent' in metrics:
+            print(f'評価条件: 残りツモ {metrics.get("min_remaining", 0)}〜{metrics["max_remaining"]}枚 / '
+                  f'F1の保有判定: 推定確率 {metrics["min_probability_percent"]:g}%以上')
         print(format_evaluation(metrics))
     else:
         print('評価結果は未保存です。学内で評価してから再度書き出してください。')
@@ -470,7 +551,8 @@ def export_model(args):
     settings_keys=('tensorflow_version','mode','epochs','batch_size','learning_rate','seed',
                    'train_rows','test_rows','feature_count','max_train','max_test','max_games','requested_players')
     error_keys=('mae','mean_baseline_mae','mse','rmse','mae_improvement','mae_reduction_percent','test_rows',
-                'count_accuracy','presence_precision','presence_recall','presence_f1','eval_seed')
+                'count_accuracy','presence_precision','presence_recall','presence_f1','eval_seed',
+                'min_remaining','max_remaining','min_probability_percent')
     values={**metrics,**config}
     portable_settings={k:values[k] for k in settings_keys if k in values}
     portable_metrics={k:metrics[k] for k in error_keys if k in metrics}
@@ -523,10 +605,11 @@ def predict(args):
     else:
         print(f'対局: {gid}')
         print(f'局面: {args.state_index} / 自分の席: {args.observer} / 相手の席: {args.target}')
-    print(f'予測枚数が多い牌（上位{args.top}種）')
+    top = args.top if args.top is not None else 10
+    print(f'予測枚数が多い牌（上位{top}種）')
     if args.show_answer:
         actual=label_from_csv(row)
-    for i in np.argsort(-prediction)[:args.top]:
+    for i in np.argsort(-prediction)[:top]:
         extra=f' / 実際: {actual[i]:.0f}枚' if args.show_answer else ''
         print(f'{TILE_NAMES[i]:>3}: {prediction[i]:.3f}枚{extra}')
     print(f'予測枚数の合計: {prediction.sum():.3f}枚（合法な手牌枚数への制約なし）')
@@ -539,16 +622,28 @@ def main():
     parser.add_argument('--model-dir',type=Path,help='別の場所にあるモデルを指定')
     parser.add_argument('--action',choices=['hyoka','yosoku','info','export','douji','sannin'],default=ACTION)
     parser.add_argument('--output-dir',type=Path,help='評価結果の保存先。既定はモデル内のhyoka')
-    parser.add_argument('--eval-seed',type=int,help='評価抽出のseed。省略時は毎回生成')
+    parser.add_argument('--eval-seed',type=int,help='評価・sanninのランダム抽出を再現するseed')
     parser.add_argument('--test-games',type=int,help='未学習対局から抽出する対局数')
     parser.add_argument('--test-rows',type=int,help='通常評価で抽出する行数')
     parser.add_argument('--cases',type=int,default=256,help='同時推定の評価局面数')
-    parser.add_argument('--state-index',type=int,default=30)
+    parser.add_argument('--state-index', type=int,
+                        help='局面番号。sanninで省略すると条件に合う局面をランダムに選ぶ')
+    parser.add_argument('--min-state-index', type=int, help='sanninで対象にする局面番号の下限')
+    parser.add_argument('--max-state-index', type=int, help='sanninで対象にする局面番号の上限')
+    parser.add_argument('--min-remaining', type=int, metavar='0..70',
+                        help='評価・sanninで対象にする残りツモ数の下限')
+    parser.add_argument('--max-remaining', type=int, metavar='0..70',
+                        help='評価・sanninで対象にする残りツモ数の上限')
+    parser.add_argument('--min-probability', type=float, metavar='1..100',
+                        help='sanninの表示・通常評価のF1で使う保有推定確率の下限（%%）')
+    parser.add_argument('--max-probability', type=float, metavar='1..100',
+                        help='sanninで表示する保有推定確率の上限（%%）')
     parser.add_argument('--observer',type=int,choices=range(4),default=0)
     parser.add_argument('--target',type=int,choices=range(4),default=1)
     parser.add_argument('--game-id',help='予測する対局ID')
     parser.add_argument('--input-dir',type=Path,help='評価・予測に使う変換先フォルダ')
-    parser.add_argument('--top',type=int,choices=range(1,35),default=10,metavar='1..34')
+    parser.add_argument('--top', type=int, choices=range(1, 35), metavar='1..34',
+                        help='相手1人あたりの表示上限（省略時はsanninで条件を満たす全牌種、yosokuで上位10種）')
     parser.add_argument('--show-answer',action='store_true')
     args=parser.parse_args()
     name=args.name or MODEL_NAME
@@ -562,7 +657,43 @@ def main():
         parser.error(f'モデルがありません: {args.model_dir}')
     if args.test_rows is not None and args.test_rows<1:parser.error('--test-rowsは1以上です')
     if args.test_games is not None and args.test_games<1:parser.error('--test-gamesは1以上です')
-    if args.state_index<0:parser.error('state-indexは0以上です')
+    if args.state_index is None and args.action != 'sannin':
+        args.state_index = 30
+    if args.state_index is not None and args.state_index < 0:
+        parser.error('--state-index は0以上です')
+    if args.action != 'sannin' and any(
+        value is not None for value in (args.min_state_index, args.max_state_index, args.max_probability)
+    ):
+        parser.error('局面番号の範囲と --max-probability は --action sannin で指定してください')
+    if args.action not in ('sannin', 'hyoka', 'douji') and any(
+        value is not None for value in (args.min_remaining, args.max_remaining)
+    ):
+        parser.error('残りツモ数の範囲は --action sannin、hyoka、douji で指定してください')
+    if args.action not in ('sannin', 'hyoka') and args.min_probability is not None:
+        parser.error('--min-probability は --action sannin、hyoka で指定してください')
+
+    if args.max_remaining is None:
+        use_default = args.min_remaining is None and (args.action != 'sannin' or args.state_index is None)
+        args.max_remaining = DEFAULT_MAX_REMAINING if use_default else 70
+    if args.min_remaining is None:
+        args.min_remaining = 0
+    if not 0 <= args.min_remaining <= args.max_remaining <= 70:
+        parser.error('残りツモ数の範囲は 0 ≤ 下限 ≤ 上限 ≤ 70 にしてください')
+
+    if args.min_probability is None:
+        args.min_probability = DEFAULT_MIN_PROBABILITY if args.max_probability is None else 1
+    if args.max_probability is None:
+        args.max_probability = 100
+    if not 1 <= args.min_probability <= args.max_probability <= 100:
+        parser.error('推定確率の範囲は 1 ≤ 下限 ≤ 上限 ≤ 100 にしてください')
+
+    if args.min_state_index is None:
+        args.min_state_index = 0
+    if args.min_state_index < 0 or (args.max_state_index is not None and args.max_state_index < args.min_state_index):
+        parser.error('局面番号の範囲は 0 ≤ 下限 ≤ 上限 にしてください')
+    if args.state_index is not None and (args.state_index < args.min_state_index or
+            (args.max_state_index is not None and args.state_index > args.max_state_index)):
+        parser.error('--state-index が指定した局面番号の範囲外です')
     if args.action=='info' or (args.action=='hyoka' and (args.model_dir/'sample.json').is_file()):
         show_info(args)
     elif args.action=='hyoka':
@@ -574,7 +705,10 @@ def main():
         if args.observer==args.target:parser.error('observerとtargetは異なる席を指定してください')
         export_model(args)
     elif args.action=='sannin':
-        predict_three(args)
+        try:
+            predict_three(args)
+        except ValueError as exc:
+            parser.exit(2, f'予測できません：{exc}\n')
     else:
         if args.observer==args.target:parser.error('observerとtargetは異なる席を指定してください')
         predict(args)

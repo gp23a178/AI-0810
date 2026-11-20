@@ -1,15 +1,15 @@
 {
   "model_name": "miekazu_01",
-  "model_dir": "/home/fujita_lab/WSL/AI-0810/tenhou_data/models/miekazu_01",
-  "mae": 0.4640294909477234,
-  "mean_baseline_mae": 0.49736887216567993,
-  "mae_improvement": 0.03333938121795654,
-  "mae_reduction_percent": 6.703149932320407,
-  "mse": 0.3570030629634857,
-  "rmse": 0.5974973330178853,
+  "model_dir": "/home/p-user/WSL/AI-0810/tenhou_data/models/miekazu_01",
+  "mae": 0.4567841589450836,
+  "mean_baseline_mae": 0.4938713312149048,
+  "mae_improvement": 0.03708717226982117,
+  "mae_reduction_percent": 7.509480693805029,
+  "mse": 0.34882742166519165,
+  "rmse": 0.5906161373220271,
   "train_rows": 48000,
   "test_rows": 3000,
-  "available_test_rows": 62736,
+  "available_test_rows": 60912,
   "train_game_ids": [
     "2011022010gm-00a9-0000-17334a92",
     "2014092300gm-00a9-0000-113ea275",
@@ -45,9 +45,9 @@
     "2026051522gm-00a9-0000-0925ded1"
   ],
   "test_game_ids": [
+    "2011020613gm-00a9-0000-3774f8d1",
     "2011120822gm-00a9-0000-d9e166ec",
     "2014021221gm-00a9-0000-23324af3",
-    "2015042022gm-00a9-0000-e28a3f54",
     "2021032711gm-00a9-0000-78b3c374"
   ],
   "eligible_test_game_ids": [
@@ -61,12 +61,12 @@
     "2024120321gm-00a9-0000-7b9af3aa"
   ],
   "selected_test_game_ids": [
+    "2011020613gm-00a9-0000-3774f8d1",
     "2011120822gm-00a9-0000-d9e166ec",
     "2014021221gm-00a9-0000-23324af3",
-    "2015042022gm-00a9-0000-e28a3f54",
     "2021032711gm-00a9-0000-78b3c374"
   ],
-  "eval_seed": 4608787255869105547,
+  "eval_seed": 7819303044349323544,
   "requested_test_rows": 3000,
   "requested_test_games": 4,
   "game_overlap": 0,
@@ -74,9 +74,9 @@
   "input": "/home/fujita_lab/WSL/AI-0810/tenhou_data/converted/after",
   "evaluated_saved_model": true,
   "legacy_sampling_reproduced": false,
-  "count_accuracy": 0.6658627450980392,
-  "presence_precision": 0.4688810326399737,
-  "presence_recall": 0.3895757906960858,
-  "presence_f1": 0.42556525632415493,
+  "count_accuracy": 0.6679509803921568,
+  "presence_precision": 0.477871192893401,
+  "presence_recall": 0.41022673112276165,
+  "presence_f1": 0.4414727972156072,
   "tile_bounds_verified": true
 }

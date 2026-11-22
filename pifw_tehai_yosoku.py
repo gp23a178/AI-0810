@@ -12,7 +12,29 @@ PRE_DISCARD_SCHEMA = 'pifw-mahjong-observation-v1'
 SCHEMA = 'pifw-mahjong-observation-v2'
 TILE_IDS = range(1, 35)
 FEATURE_PROFILES = ('counts', 'recent')
-DEFAULT_MODEL = Path(__file__).resolve().parent / 'tenhou_data/models/pifw_02'
+MODELS_DIR = Path(__file__).resolve().parent / 'tenhou_data/models'
+MSE_BASELINE = 'pifw_mse_baseline'
+MSE_BASELINE_SOURCE = 'pifw_02'
+MODEL_GROUPS = ('32_games', '39_games')
+
+
+def model_path(name):
+    if not name or Path(name).name != name or name in ('.', '..') or chr(92) in name:
+        raise ValueError('モデル名にはフォルダを含めないでください')
+    path = MODELS_DIR / name
+    if path.is_dir():
+        return path
+    grouped_name = MSE_BASELINE if name == MSE_BASELINE_SOURCE else name
+    if name == MSE_BASELINE_SOURCE and (MODELS_DIR / grouped_name).is_dir():
+        return MODELS_DIR / grouped_name
+    for group in MODEL_GROUPS:
+        grouped = MODELS_DIR / group / grouped_name
+        if grouped.is_dir():
+            return grouped
+    return MODELS_DIR / MSE_BASELINE_SOURCE if name == MSE_BASELINE else path
+
+
+DEFAULT_MODEL = model_path(MSE_BASELINE_SOURCE)
 
 
 def feature_names(profile, schema=SCHEMA):
@@ -145,6 +167,8 @@ class HandPredictor:
     def __init__(self, model_dir):
         import tensorflow as tf
 
+        if not model_dir.is_dir() and model_dir.parent.resolve() == MODELS_DIR:
+            model_dir = model_path(model_dir.name)
         self.manifest = json.loads((model_dir / 'model.json').read_text(encoding='utf-8'))
         self.profile = self.manifest['feature_profile']
         self.schema = self.manifest['observation_schema']

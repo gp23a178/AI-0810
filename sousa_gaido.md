@@ -15,6 +15,29 @@ cd ~/WSL/AI-0810
 source ~/WSL/venv/bin/activate
 ```
 
+## 現在のPIFW比較に使うモデル
+
+学習済みの6モデルは `tenhou_data/models` 内の2フォルダに保存しています。
+
+| フォルダ | 収録モデル |
+| --- | --- |
+| `32_games`（7対局の追加なし） | `pifw_mse_baseline`、`pifw_weighted_negative`、`pifw_hard_negative` |
+| `39_games`（7対局を追加） | `pifw_mse_achievement_day`、`pifw_weighted_negative_achievement_day`、`pifw_hard_negative_achievement_day` |
+
+Ubuntuでは従来どおり、評価にはフォルダ名を付けずモデル名を指定します。
+
+```bash
+python pifw_moderu_seisei.py compare --names pifw_mse_baseline pifw_weighted_negative pifw_hard_negative
+python pifw_moderu_seisei.py compare --names pifw_mse_achievement_day \
+  pifw_weighted_negative_achievement_day pifw_hard_negative_achievement_day
+```
+
+旧モデルの `miekazu_01`、`miekazu_02`、`watashi_01`、`pifw_01`、`pifw_02_recent` を使う過去の例は、保管時点のモデルを復元してから実行してください。例えば `miekazu_01` は次のように復元できます。
+
+```bash
+git restore --source=6893d025 -- tenhou_data/models/miekazu_01
+```
+
 ## 1．元牌譜のダウンロード（既に保存済みなら不要）
 
 ```bash
@@ -282,7 +305,7 @@ infoはPythonだけで保存済み結果を表示します。予測や評価に�
 
 ## PIFWの4人麻雀で他家3人の手牌を継続推定する
 
-学習済みモデルは `tenhou_data/models/pifw_02/` にあります。配牌後から終局前まで、指定した席の視点で推論できます。自分の手番以外も対象です。PIFWの自動ツモなど、一つの着手コマンド内に複数の処理がある場合は、コマンド確定後に観測します。
+既定の学習済みモデルは `tenhou_data/models/32_games/pifw_mse_baseline/` にあります。配牌後から終局前まで、指定した席の視点で推論できます。自分の手番以外も対象です。PIFWの自動ツモなど、一つの着手コマンド内に複数の処理がある場合は、コマンド確定後に観測します。
 
 情報源は、自分の手牌、4人の河・副露・立直・伏せ牌の枚数、公開ドラ表示牌です。他家がツモった牌の種類や山の中身は入力に含めません。鳴かれた打牌は河から除き、副露で1回だけ数えます。牌種は1〜34で、天鳳の赤牌は通常の5に合算します。
 
@@ -341,6 +364,24 @@ python pifw_moderu_seisei.py train --name pifw_02_recent --features recent --see
 
 期待枚数を `p_i`、正解の枚数を `y_i` とすると、MAEは `Σ |p_i−y_i| / 34`、MSEは `Σ (p_i−y_i)² / 34` です。一致枚数は牌種ごとの「表示枚数と正解枚数の小さい方」を合計します。表示基準と探索回数は `pifw_live.py`、マークの色や境界は `MahjongPredictionPanel.cs` で変更できます。打牌AIの着手選択には既存の方式を使います。
 
+### 研究用の相手別予測スコア
+
+「研究用の答え合わせ」を有効にすると、相手ごとにスコアと7段階のマークを表示します。配牌時に0点へ戻し、以後は表示が受理された新しい局面で更新します。符号と段階は丸めた整数点で決めます。
+
+| スコア（点） | 段階 |
+| --- | --- |
+| −11以下 | 1 |
+| −10〜−1 | 2 |
+| 0〜10 | 3 |
+| 11〜20 | 4 |
+| 21〜30 | 5 |
+| 31〜39 | 6 |
+| 40以上 | 7 |
+
+局面点は、表示候補の一致と枚数誤差を組み合わせます。一致を1枚分、外れを0.5枚分の減点として計算し、その差を実際の伏せ牌枚数で割った項に80%の重みを置きます。残り牌に比例した予測の二乗誤差を (E_r)、モデルの二乗誤差を (E_m) とし、`(E_r - E_m) / (E_r + E_m)` の項に20%の重みを置きます。両方の誤差が0なら、この項は0です。重み付き和を100倍して、前回の表示点75%と今回の局面点25%を混ぜます。実手牌はUnity内の採点に使います。放銃推定のマークと研究スコアのマークは画面に別々に表示されます。
+
+学習に使っていない8対局・9,308局面を1P視点で再生した検証では、相手別延べ27,924件中、40点以上は `pifw_02` で833件（2.98%）、`pifw_mse_achievement_day` で1,101件（3.94%）でした。両方とも最高64点でした。実際の画面では局面更新に推論が間に合わない場合に最新局面を優先するため、表示頻度はこの再生結果と変わることがあります。
+
 ### 役・フリテンを考慮した放銃推定
 
 自分の手元にある牌を通常打牌したとき、相手ごとにロンできる見込みを表示します。既定は危険度上位3牌で、「手元の全牌の放銃推定を表示」で全候補を確認できます。相手ごとの最大値でマークが変わります（10%以下、10%超25%未満、25%以上）。相手の手牌がツモ後などで14枚相当の間は、その相手への危険度を保留します。
@@ -359,8 +400,45 @@ python -m pip install -r requirements.txt
 python pifw_danger_calibrate.py
 ```
 
-保存先は `tenhou_data/models/pifw_02/danger_calibration.json` です。検証値は、他家が実際にロンを選んだ頻度ではなく、牌譜の実手牌ならその候補でロンが可能だったかを基準にしています。
+保存先は `tenhou_data/models/32_games/pifw_mse_baseline/danger_calibration.json` です。検証値は、他家が実際にロンを選んだ頻度ではなく、牌譜の実手牌ならその候補でロンが可能だったかを基準にしています。
 
 今回の補正には4対局・640局面、動作検証には別の4対局・96局面を使用しました。現物を除いた候補2,789件のうち、ロン可能だったものは31件です。確率の二乗誤差（Brier score）は探索と補正の組み合わせで0.01050、牌譜の発生率だけで0.01045でした。今回の検証では探索による改善は確認できませんでした。PIFWでの校正は未評価です。
 
 役判定ライブラリ [MahjongRepository mahjong](https://mahjongrepository.github.io/mahjong/)
+
+## 非保有牌の誤予測を減らす損失関数の比較
+
+同じ牌譜、390特徴量、32学習対局・8評価対局、seed 42、12エポック、幅64、バッチ128、学習率0.001で、損失関数を変えて比較します。対局中のモデル入力は公開情報と自分の手牌です。相手の実手牌は訓練時の正解ラベルと評価で使います。
+
+| 評価時のモデル名 | 学習の違い |
+| --- | --- |
+| `pifw_mse_baseline` | 標準MSE。学習済みの `pifw_02` と同じモデル |
+| `pifw_weighted_negative` | MSEに、実際には持っていない牌の二乗誤差の平均を0.25倍して加える |
+| `pifw_hard_negative` | MSEに、実際には持っていない牌のうち期待枚数が高い最大5種の二乗誤差の平均を0.25倍して加える |
+
+従来の `pifw_02` のモデル実体は `tenhou_data/models/32_games/pifw_mse_baseline` にあります。評価では両方の名前を使えます。
+
+公開牌で残り0枚と分かる牌には、既存の出力制約が効きます。負例の追加損失は、その制約を掛けても正の期待枚数が出ている非保有牌に対して計算します。通常のMSEにも非保有牌の誤差は含まれます。
+
+```bash
+cd ~/WSL/AI-0810
+source ~/WSL/venv/bin/activate
+python pifw_moderu_seisei.py compare
+```
+
+`compare` は共通の評価局面でMAE、MSE、保有判定の適合率・再現率・F1、相手1人あたりの予測総枚数を出します。保有判定は期待枚数0.5枚以上です。仮手牌の一致枚数は共通の256観測で3人同時配分した結果です。`--names` で比較対象を指定できます。同じ特徴量・対局分割・主要な学習条件のモデルが対象です。
+
+別名で追試する場合は、`train` で `--loss weighted_negative` または `--loss hard_negative` を使います。`--negative-weight` は追加損失の係数です。`--hard-k` は `hard_negative` で重視する非保有牌の最大種類数です。
+
+### 天鳳位の達成日当日の牌譜を学習に追加する
+
+`--include-achievement-day` は元ZIPを調べ、対象者が達成日当日に天鳳位（牌譜の段位コード20）で開始した四人打ちの対局を学習側に追加します。既定の `converted/after` を分割して評価対局を固定してから、追加対局を一時変換します。追加した対局IDはモデルの `model.json` の `achievement_day_train_game_ids` に保存されます。
+
+```bash
+python pifw_moderu_seisei.py train --name pifw_mse_achievement_day \
+  --include-achievement-day --loss mse --epochs 12 --seed 42
+python pifw_moderu_seisei.py compare --allow-different-training-games \
+  --names pifw_mse_baseline pifw_mse_achievement_day
+```
+
+既定の変換データと元ZIP30件で、学習32対局に当日の7対局を追加できます。比較は同じ未学習8対局で行います。再学習する場合は `--name` に未使用のモデル名を指定してください。

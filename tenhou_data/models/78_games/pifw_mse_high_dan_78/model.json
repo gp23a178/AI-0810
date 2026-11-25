@@ -1,5 +1,5 @@
 {
-  "model_name": "pifw_02",
+  "model_name": "pifw_mse_high_dan_78",
   "observation_schema": "pifw-mahjong-observation-v2",
   "feature_profile": "counts",
   "feature_names": [
@@ -405,8 +405,23 @@
   "width": 64,
   "learning_rate": 0.001,
   "batch_size": 128,
+  "loss": "mse",
+  "negative_weight": 0.0,
+  "hard_k": null,
   "train_game_ids": [
+    "2010082917gm-00a9-0000-603cb2f2",
+    "2010102021gm-00a9-0000-5a8b1344",
+    "2011011221gm-00a9-0000-1248431d",
+    "2011020504gm-00a9-0000-27c0af8b",
+    "2011021316gm-00a9-0000-1f21b9e8",
     "2011022010gm-00a9-0000-17334a92",
+    "2011111712gm-00a9-0000-0c8c7e1d",
+    "2012102323gm-00a9-0000-2cc39b57",
+    "2012112009gm-00a9-0000-78525cce",
+    "2013060912gm-00a9-0000-c70c35a4",
+    "2014032505gm-00a9-0000-710389de",
+    "2014091700gm-00a9-0000-f760f11d",
+    "2014092213gm-00a9-0000-fcc92aed",
     "2014092300gm-00a9-0000-113ea275",
     "2014092311gm-00a9-0000-68c724bc",
     "2014092312gm-00a9-0000-bb1f4469",
@@ -427,16 +442,50 @@
     "2014092921gm-00a9-0000-92980b2f",
     "2014092922gm-00a9-0000-3de62e07",
     "2014100414gm-00a9-0000-0ae4e579",
+    "2015010419gm-00a9-0000-16f0c7ab",
+    "2015011600gm-00a9-0000-d5e899b1",
     "2015020121gm-00a9-0000-910807fa",
+    "2015050518gm-00a9-0000-a715736c",
     "2015060522gm-00a9-0000-2910ebd0",
+    "2016020402gm-00a9-0000-8024be5f",
+    "2016061221gm-00a9-0000-8430787c",
     "2016082221gm-00a9-0000-ebc65731",
+    "2016091519gm-00a9-0000-8eb7a8c2",
+    "2016100122gm-00a9-0000-eafa5e2a",
+    "2016121304gm-00a9-0000-43feb1fd",
+    "2017032722gm-00a9-0000-37d53c6f",
+    "2018051603gm-00a9-0000-cedfaa40",
+    "2018063022gm-00a9-0000-8562ec3f",
+    "2018070317gm-00a9-0000-8dfd2e4f",
     "2018091500gm-00a9-0000-3d386ba3",
+    "2018102317gm-00a9-0000-c2131601",
     "2018111004gm-00a9-0000-994b1749",
+    "2019091221gm-00a9-0000-f3d6770c",
+    "2019120406gm-00a9-0000-91983a6c",
+    "2019122921gm-00a9-0000-91cc16c0",
     "2020012905gm-00a9-0000-6e392223",
+    "2020062801gm-00a9-0000-794bd4eb",
+    "2020081220gm-00a9-0000-9ee6ab3b",
     "2020120701gm-00a9-0000-b3d0ca8e",
+    "2021031918gm-00a9-0000-a808bb73",
+    "2021060821gm-00a9-0000-727460db",
+    "2021092521gm-00a9-0000-29dd1fbd",
     "2021120622gm-00a9-0000-af3a1897",
+    "2021123117gm-00a9-0000-24f37601",
+    "2022011019gm-00e1-0000-0f12445e",
+    "2022021221gm-00a9-0000-ae986ad4",
+    "2022031221gm-00a9-0000-1d8edf8a",
+    "2022122313gm-00a9-0000-2dbb928f",
+    "2024040820gm-00a9-0000-7474d5f7",
+    "2024053014gm-00a9-0000-3c9f835d",
+    "2024080520gm-00a9-0000-77a12270",
+    "2024111321gm-00a9-0000-471ab9f3",
     "2025031514gm-00a9-0000-179f60cd",
+    "2025060315gm-00a9-0000-4999c3e4",
+    "2025102722gm-00a9-0000-352520ab",
     "2026011101gm-00a9-0000-0abb7f45",
+    "2026021020gm-00a9-0000-fa0a9e21",
+    "2026021120gm-00a9-0000-e0ae6868",
     "2026051522gm-00a9-0000-0925ded1"
   ],
   "test_game_ids": [
@@ -449,9 +498,192 @@
     "2022050811gm-00a9-0000-0972fc19",
     "2024120321gm-00a9-0000-7b9af3aa"
   ],
-  "train_positions": 36828,
+  "achievement_day_train_game_ids": [
+    "2016100122gm-00a9-0000-eafa5e2a",
+    "2016121304gm-00a9-0000-43feb1fd",
+    "2020081220gm-00a9-0000-9ee6ab3b",
+    "2022011019gm-00e1-0000-0f12445e",
+    "2024111321gm-00a9-0000-471ab9f3",
+    "2025060315gm-00a9-0000-4999c3e4",
+    "2025102722gm-00a9-0000-352520ab"
+  ],
+  "train_positions": 84805,
   "test_positions": 9308,
   "observers_per_position": 4,
-  "train_target_rows": 441936,
-  "test_target_rows": 111696
+  "train_target_rows": 1017660,
+  "test_target_rows": 111696,
+  "discard_pattern": {
+    "version": 1,
+    "coefficients": [
+      -0.42472447654757717,
+      -0.30060835608515424,
+      -0.062232928381267476,
+      0.03144721458950283,
+      -0.3655471037463196,
+      -0.12813447409748674
+    ],
+    "fit": {
+      "regularization": 500,
+      "games": 78,
+      "target_rows": 1017660
+    }
+  },
+  "high_dan_train_games": [
+    {
+      "game_id": "2010082917gm-00a9-0000-603cb2f2",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2010102021gm-00a9-0000-5a8b1344",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2011011221gm-00a9-0000-1248431d",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2011020504gm-00a9-0000-27c0af8b",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2011021316gm-00a9-0000-1f21b9e8",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2011111712gm-00a9-0000-0c8c7e1d",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2012102323gm-00a9-0000-2cc39b57",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2012112009gm-00a9-0000-78525cce",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2013060912gm-00a9-0000-c70c35a4",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2014032505gm-00a9-0000-710389de",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2014091700gm-00a9-0000-f760f11d",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2014092213gm-00a9-0000-fcc92aed",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2015010419gm-00a9-0000-16f0c7ab",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2015011600gm-00a9-0000-d5e899b1",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2015050518gm-00a9-0000-a715736c",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2016020402gm-00a9-0000-8024be5f",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2016061221gm-00a9-0000-8430787c",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2016091519gm-00a9-0000-8eb7a8c2",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2017032722gm-00a9-0000-37d53c6f",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2018051603gm-00a9-0000-cedfaa40",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2018063022gm-00a9-0000-8562ec3f",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2018070317gm-00a9-0000-8dfd2e4f",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2018102317gm-00a9-0000-c2131601",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2019091221gm-00a9-0000-f3d6770c",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2019120406gm-00a9-0000-91983a6c",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2019122921gm-00a9-0000-91cc16c0",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2020062801gm-00a9-0000-794bd4eb",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2021031918gm-00a9-0000-a808bb73",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2021060821gm-00a9-0000-727460db",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2021092521gm-00a9-0000-29dd1fbd",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2021123117gm-00a9-0000-24f37601",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2022021221gm-00a9-0000-ae986ad4",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2022031221gm-00a9-0000-1d8edf8a",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2022122313gm-00a9-0000-2dbb928f",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2024040820gm-00a9-0000-7474d5f7",
+      "starting_rank_code": 18
+    },
+    {
+      "game_id": "2024053014gm-00a9-0000-3c9f835d",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2024080520gm-00a9-0000-77a12270",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2026021020gm-00a9-0000-fa0a9e21",
+      "starting_rank_code": 19
+    },
+    {
+      "game_id": "2026021120gm-00a9-0000-e0ae6868",
+      "starting_rank_code": 19
+    }
+  ]
 }

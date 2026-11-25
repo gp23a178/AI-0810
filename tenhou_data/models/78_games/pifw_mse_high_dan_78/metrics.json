@@ -1,41 +1,41 @@
 {
-  "model_mae": 0.4362412691116333,
+  "model_mae": 0.43819659948349,
   "uniform_expected_mae": 0.4686168996977198,
   "allocation_cases": 256,
   "mean_matched_tiles_per_opponent": {
     "uniform": 3.9635416666666665,
     "proportional": 5.446614583333333,
-    "joint": 5.515625
+    "joint": 5.76953125
   },
   "by_event": {
     "initial": {
       "positions": 89,
-      "model_mae": 0.4740159809589386,
+      "model_mae": 0.5061925053596497,
       "uniform_expected_mae": 0.5041931674124798
     },
     "draw": {
       "positions": 4398,
-      "model_mae": 0.4395374655723572,
+      "model_mae": 0.44155770540237427,
       "uniform_expected_mae": 0.47154137790711637
     },
     "discard": {
       "positions": 4527,
-      "model_mae": 0.43296200037002563,
+      "model_mae": 0.43445271253585815,
       "uniform_expected_mae": 0.4656033334847875
     },
     "meld": {
       "positions": 164,
-      "model_mae": 0.41990694403648376,
+      "model_mae": 0.42228445410728455,
       "uniform_expected_mae": 0.4534522772389399
     },
     "riichi": {
       "positions": 125,
-      "model_mae": 0.4371277987957001,
+      "model_mae": 0.4319095015525818,
       "uniform_expected_mae": 0.47335471520939154
     },
     "dora": {
       "positions": 5,
-      "model_mae": 0.3471258282661438,
+      "model_mae": 0.3403151035308838,
       "uniform_expected_mae": 0.37042537943483167
     }
   }

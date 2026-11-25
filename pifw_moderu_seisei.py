@@ -10,18 +10,22 @@ import tempfile
 from urllib.parse import unquote
 
 from aite_tehai_gakushu import BASE_DIR, DATA_DIR, split_game_ids, select_csvs
+from moderu_jikko import TILE_NAMES
 from paifu_csv_henkan import (
     ACTION_INITIAL, ACTION_DRAW, ACTION_DISCARD, ACTION_MELD, ACTION_REACH, ACTION_DORA,
     REFERENCE_COLUMNS, REFERENCE_EXTRA_COLUMNS, cached_zip, convert_one, read_xml,
 )
 from pifw_tehai_yosoku import (
-    PRE_DISCARD_SCHEMA, SCHEMA, FEATURE_PROFILES, MSE_BASELINE, MSE_BASELINE_SOURCE,
-    HandPredictor, assign_hands, encode_observation, feature_names, model_path, tile_counts,
+    PRE_DISCARD_SCHEMA, SCHEMA, FEATURE_PROFILES, DEFAULT_MODEL_NAME, MSE_BASELINE,
+    DISPLAY_THRESHOLD, HandPredictor, assign_hands, discard_pattern_features, displayed_tile_counts,
+    encode_observation, feature_names, model_path, tile_counts,
 )
 
 RED_BASE = {35: 5, 36: 14, 37: 23}
 LOSS_MODES = ('mse', 'weighted_negative', 'hard_negative')
-COMPARISON_MODELS = (MSE_BASELINE, 'pifw_weighted_negative', 'pifw_hard_negative')
+COMPARISON_MODELS = (
+    DEFAULT_MODEL_NAME, 'pifw_weighted_negative_achievement_day', 'pifw_hard_negative_achievement_day',
+)
 DEFAULT_NEGATIVE_WEIGHT = 0.25
 DEFAULT_HARD_K = 5
 EVENT_NAMES = {
@@ -237,6 +241,69 @@ def achievement_day_games(directory, players, excluded):
     return list(selected.values())
 
 
+def high_dan_games(directory, players, excluded, count, seed):
+    # Only pre-achievement matches with a confirmed starting rank.
+    from collections import Counter
+    from gzip import BadGzipFile
+    from xml.etree.ElementTree import ParseError
+
+    by_name = {p['player']: p for p in players}
+    with (directory / 'logs_manifest.csv').open(encoding='utf-8-sig', newline='') as f:
+        rows = [r for r in csv.DictReader(f) if r['source_player'] in by_name
+                and r['game_id'] and r['game_id'] not in excluded
+                and r['game_date'] < by_name[r['source_player']]['achievement_date']]
+    random.Random(seed).shuffle(rows)
+    wanted = {18: count // 2, 19: (count + 1) // 2}
+    selected, seen, per_player = [], set(excluded), Counter()
+    unreadable = 0
+    for row in rows:
+        player = row['source_player']
+        game_id = row['game_id']
+        if game_id in seen or per_player[player] >= 2:
+            continue
+        archive = DATA_DIR / 'archives' / Path(by_name[player]['zip_filename']).name
+        try:
+            root = read_xml(cached_zip(str(archive)).read(row['member']))
+        except (ParseError, ValueError, BadGzipFile, EOFError):
+            unreadable += 1
+            continue
+        info = next((tag for tag in root.iter('UN') if 'dan' in tag.attrib), None)
+        if info is None:
+            continue
+        seats = [i for i in range(4) if unquote(info.get(f'n{i}', '')) == player]
+        encoded_ranks = info.attrib['dan'].split(',')
+        if len(seats) != 1 or len(encoded_ranks) != 4 or not all(rank.isdecimal() for rank in encoded_ranks):
+            continue
+        ranks = list(map(int, encoded_ranks))
+        if min(ranks) < 16:
+            continue
+        rank = ranks[seats[0]]
+        if not wanted.get(rank):
+            continue
+        selected.append({**row, 'source_zip': str(archive), 'starting_rank_code': rank})
+        seen.add(game_id)
+        per_player[player] += 1
+        wanted[rank] -= 1
+        if not any(wanted.values()):
+            print(f'Unreadable or unsupported log entries skipped: {unreadable}', flush=True)
+            return sorted(selected, key=lambda game: game['game_id'])
+    raise ValueError(f'Insufficient matching high-dan games: {wanted}')
+
+
+def fit_discard_pattern(predict, features, labels, names):
+    import numpy as np
+
+    gram = np.eye(6) * 500
+    response = np.zeros(6)
+    for index in range(0, len(features), 3072):
+        batch = features[index:index + 3072]
+        actual = labels[index:index + 3072]
+        design = discard_pattern_features(batch, names).reshape(-1, 6)
+        gram += design.T @ design
+        response += design.T @ (actual - predict(batch)).reshape(-1)
+    return np.linalg.solve(gram, response)
+
+
 def convert_extra_games(games, directory):
     (directory / 'games').mkdir()
     paths = []
@@ -265,15 +332,26 @@ def train(args, output):
     tf.config.threading.set_inter_op_parallelism_threads(2)
     paths, players, _ = select_csvs(args.input_dir, 'L', args.seed)
     train_ids, test_ids = split_game_ids(paths, args.seed)
+    games = []
+    rank_games = []
     extra_ids = set()
     if args.include_achievement_day:
         games = achievement_day_games(args.input_dir, players, train_ids | test_ids)
         extra_ids = {game['game_id'] for game in games}
         train_ids |= extra_ids
         print(f'達成日当日の {len(extra_ids)} 対局を学習側だけに追加します', flush=True)
+    if args.add_high_dan_games:
+        rank_games = high_dan_games(args.input_dir, players, train_ids | test_ids,
+                                    args.add_high_dan_games, args.seed)
+        games.extend(rank_games)
+        train_ids.update(game['game_id'] for game in rank_games)
+        output = output.parent / f'{len(train_ids)}_games' / output.name
+        if output.exists():
+            raise FileExistsError(output)
+        print(f'Additional high-dan training games: {len(rank_games)}', flush=True)
     print(f'公開局面を抽出中: 学習 {len(train_ids)}対局 / 評価 {len(test_ids)}対局', flush=True)
-    if extra_ids:
-        with tempfile.TemporaryDirectory(prefix='pifw-achievement-day-') as tmp:
+    if games:
+        with tempfile.TemporaryDirectory(prefix='pifw-training-games-') as tmp:
             extra_paths = convert_extra_games(games, Path(tmp))
             x_train, y_train, _ = load_dataset(paths + extra_paths, train_ids, args.features)
     else:
@@ -293,7 +371,22 @@ def train(args, output):
     data = tf.data.Dataset.from_tensor_slices((flat_x, flat_y)).shuffle(
         min(len(flat_x), 32768), seed=args.seed).batch(args.batch_size).with_options(options)
     history = model.fit(data, epochs=args.epochs, verbose=2, shuffle=False)
-    metrics = evaluate(lambda x: model(x, training=False).numpy(), x_test, y_test, args.seed, test_events)
+    def predict_unadjusted(rows):
+        return model(rows, training=False).numpy()
+
+    pattern = None
+    if rank_games:
+        print('Fitting discard pattern on training games', flush=True)
+        coefficients = fit_discard_pattern(predict_unadjusted, flat_x, flat_y, names)
+        pattern = {'version': 1, 'coefficients': coefficients.tolist(),
+                   'fit': {'regularization': 500, 'games': len(train_ids), 'target_rows': len(flat_x)}}
+
+        def predict(rows):
+            output = predict_unadjusted(rows) + discard_pattern_features(rows, names) @ coefficients
+            return np.clip(output, 0, rows[:, -35:-1]).astype(np.float32)
+    else:
+        predict = predict_unadjusted
+    metrics = evaluate(predict, x_test, y_test, args.seed, test_events)
 
     export = tf.Module()
     export.model = model
@@ -314,6 +407,12 @@ def train(args, output):
         'train_positions': len(x_train) // 4, 'test_positions': len(x_test) // 4,
         'observers_per_position': 4, 'train_target_rows': len(flat_x), 'test_target_rows': len(x_test) * 3,
     }
+    if pattern is not None:
+        manifest['discard_pattern'] = pattern
+        manifest['high_dan_train_games'] = [
+            {'game_id': g['game_id'], 'starting_rank_code': g['starting_rank_code']}
+            for g in rank_games
+        ]
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.pifw-export-', dir=output.parent) as tmp:
         staging = Path(tmp) / args.name
@@ -351,6 +450,70 @@ def evaluate_saved(args, output):
     metrics.update(test_games=len(manifest['test_game_ids']),
                    test_positions=len(x) // manifest.get('observers_per_position', 1))
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
+
+
+def demo_saved(args):
+    """Pick one held-out position and compare the displayed hand with the replay."""
+    import numpy as np
+
+    output = model_path(args.name)
+    manifest = json.loads((output / 'model.json').read_text(encoding='utf-8'))
+    test_ids = evaluation_ids(manifest)
+    if manifest['observation_schema'] != SCHEMA:
+        raise ValueError('局面デモには4視点に対応するPIFWモデルを指定してください')
+    if args.game_id is not None and args.game_id not in test_ids:
+        raise ValueError('未学習の評価対局IDを指定してください')
+    if args.state_index is not None and args.game_id is None:
+        raise ValueError('--state-index と --game-id は一緒に指定してください')
+
+    files, _, _ = select_csvs(args.input_dir, 'L', manifest['seed'])
+    rng = random.Random(args.seed)
+    candidates = [args.game_id] if args.game_id else sorted(test_ids)
+    if args.game_id is None:
+        rng.shuffle(candidates)
+    feature_order = manifest['feature_names']
+    rivers = [i for i, name in enumerate(feature_order) if '_river_' in name]
+    for game_id in candidates:
+        x, y, events = load_dataset(files, {game_id}, manifest['feature_profile'], SCHEMA)
+        observer_rows = x[args.observer::4]
+        discards = observer_rows[:, 0, rivers].sum(axis=1)
+        if args.state_index is not None:
+            index = args.state_index
+            if not 0 <= index < len(observer_rows):
+                raise ValueError(f'--state-index は0〜{len(observer_rows)-1}です')
+            break
+        eligible = np.flatnonzero((discards >= args.min_discards)
+                                  & (events[args.observer::4] == ACTION_DISCARD))
+        if len(eligible):
+            index = int(rng.choice(eligible))
+            break
+    else:
+        raise ValueError('指定された河の枚数を満たす打牌後の局面がありません')
+
+    offset = index * 4 + args.observer
+    rows = x[offset]
+    predictor = HandPredictor(output)
+    expected = predictor.predict_features(rows)
+    remaining = rows[0, -35:-1].tolist()
+    sizes = rows[:, -1].tolist()
+    assigned, _ = assign_hands(expected, remaining, sizes, 'joint')
+    shown = [displayed_tile_counts(hand, values) for hand, values in zip(assigned, expected)]
+    event = EVENT_NAMES[int(events[offset])]
+    print(f'モデル {args.name} ／ 未学習対局 {game_id} ／ 局面 {index}（{event}）')
+    print(f'自分 {args.observer+1}P ／ 河の合計 {discards[index]}枚 ／ 表示基準 期待枚数 {DISPLAY_THRESHOLD:.2f}枚以上')
+    for target, (actual, predicted) in enumerate(zip(y[offset], shown), 1):
+        seat = (args.observer + target) % 4 + 1
+        shown_total = sum(predicted)
+        matched = sum(min(a, b) for a, b in zip(actual.tolist(), predicted))
+        accuracy = f'{100 * matched / shown_total:.1f}%（予想{shown_total}枚中{matched}枚一致）' if shown_total else '算出不可（予想0枚）'
+        print(f'\n相手 {seat}P')
+        print('正解の手牌：' + format_hand(actual))
+        print('予想の手牌：' + format_hand(predicted))
+        print('予想的中率：' + accuracy)
+
+
+def format_hand(counts):
+    return ' '.join(f'{name}×{count}' for name, count in zip(TILE_NAMES, counts) if count) or 'なし'
 
 
 def compare_saved(args):
@@ -396,15 +559,24 @@ def main():
     training = actions.add_parser('train', help='学習、評価、モデルの保存')
     scoring = actions.add_parser('evaluate', help='保存済みモデルと同じ評価対局で再評価')
     comparison = actions.add_parser('compare', help='同じ特徴量と学習条件のモデルを共通局面で比較')
-    for action in (training, scoring):
-        action.add_argument('--name', default=MSE_BASELINE_SOURCE)
-    for action in (training, scoring, comparison):
+    demo = actions.add_parser('demo', help='未学習の1局面で正解手牌と表示候補を答え合わせする')
+    for action in (training, scoring, demo):
+        action.add_argument('--name', default=DEFAULT_MODEL_NAME)
+    for action in (training, scoring, comparison, demo):
         action.add_argument('--input-dir', type=Path, default=DATA_DIR / 'converted/after')
+    demo.add_argument('--observer', type=int, choices=range(4), default=0, help='観測席、0は1P')
+    demo.add_argument('--seed', type=int, help='対局と局面の抽出を再現するseed')
+    demo.add_argument('--game-id', help='学習に使っていない評価対局ID')
+    demo.add_argument('--state-index', type=int, help='--game-id で選んだ対局内の局面番号')
+    demo.add_argument('--min-discards', type=int, choices=range(97), metavar='0..96', default=24,
+                      help='自動抽出する打牌後の局面に必要な4人の河の合計枚数')
     comparison.add_argument('--names', nargs='+', default=COMPARISON_MODELS)
     comparison.add_argument('--allow-different-training-games', action='store_true',
                             help='学習対局数を変えたモデルを同じ評価対局で比較する')
     training.add_argument('--include-achievement-day', action='store_true',
                           help='達成当日に天鳳位として開始した牌譜を学習側に追加する')
+    training.add_argument('--add-high-dan-games', type=int, default=0, metavar='N',
+                          help='add ninth- and tenth-dan training games and fit the discard pattern')
     training.add_argument('--features', choices=FEATURE_PROFILES, default='counts')
     training.add_argument('--epochs', type=int, default=20)
     training.add_argument('--width', type=int, default=64)
@@ -424,6 +596,8 @@ def main():
             if len(args.names) < 2:
                 comparison.error('比較には2つ以上のモデル名が必要です')
             compare_saved(args)
+        elif args.action == 'demo':
+            demo_saved(args)
         elif args.action == 'evaluate':
             evaluate_saved(args, model_path(args.name))
         else:
@@ -437,6 +611,9 @@ def main():
                 training.error('--hard-k は hard_negative で1から34の範囲です')
             args.negative_weight = 0.0 if args.loss == 'mse' else (args.negative_weight or DEFAULT_NEGATIVE_WEIGHT)
             args.hard_k = (args.hard_k or DEFAULT_HARD_K) if args.loss == 'hard_negative' else None
+            if args.add_high_dan_games < 0 or (args.add_high_dan_games and
+                    (args.loss != 'mse' or args.features != 'counts' or not args.include_achievement_day)):
+                training.error('--add-high-dan-games requires MSE, counts and --include-achievement-day')
             if output.exists() or args.name == MSE_BASELINE:
                 training.error(f'同名または予約済みのモデル名です: {args.name}')
             train(args, output)

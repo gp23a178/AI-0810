@@ -11,11 +11,11 @@ from moderu_jikko import allocate_hands
 PRE_DISCARD_SCHEMA = 'pifw-mahjong-observation-v1'
 SCHEMA = 'pifw-mahjong-observation-v2'
 TILE_IDS = range(1, 35)
+DISPLAY_THRESHOLD = 0.35
 FEATURE_PROFILES = ('counts', 'recent')
 MODELS_DIR = Path(__file__).resolve().parent / 'tenhou_data/models'
 MSE_BASELINE = 'pifw_mse_baseline'
 MSE_BASELINE_SOURCE = 'pifw_02'
-MODEL_GROUPS = ('32_games', '39_games')
 
 
 def model_path(name):
@@ -27,14 +27,15 @@ def model_path(name):
     grouped_name = MSE_BASELINE if name == MSE_BASELINE_SOURCE else name
     if name == MSE_BASELINE_SOURCE and (MODELS_DIR / grouped_name).is_dir():
         return MODELS_DIR / grouped_name
-    for group in MODEL_GROUPS:
-        grouped = MODELS_DIR / group / grouped_name
+    for group in sorted(MODELS_DIR.glob('[0-9]*_games')):
+        grouped = group / grouped_name
         if grouped.is_dir():
             return grouped
     return MODELS_DIR / MSE_BASELINE_SOURCE if name == MSE_BASELINE else path
 
 
-DEFAULT_MODEL = model_path(MSE_BASELINE_SOURCE)
+DEFAULT_MODEL_NAME = 'pifw_mse_achievement_day'
+DEFAULT_MODEL = model_path(DEFAULT_MODEL_NAME)
 
 
 def feature_names(profile, schema=SCHEMA):
@@ -135,6 +136,10 @@ def encode_observation(observation, profile, feature_schema=None):
     return rows, seats, remaining, sizes
 
 
+def displayed_tile_counts(assigned, expected):
+    return [int(count) if value >= DISPLAY_THRESHOLD else 0 for count, value in zip(assigned, expected)]
+
+
 def assign_hands(expected, remaining, sizes, strategy, seed=None):
     """予測とは独立に、整数の仮手牌と未割当の牌を作る。"""
     import numpy as np
@@ -161,6 +166,34 @@ def assign_hands(expected, remaining, sizes, strategy, seed=None):
     return counts, unassigned
 
 
+def discard_pattern_features(rows, names):
+    """Per-tile signals for target discards, open melds, and discard progress."""
+    import numpy as np
+
+    target = names.index('target_relative_1')
+    river_start = np.array([names.index(f'seat{i}_river_1') for i in range(1, 4)])
+    meld_start = np.array([names.index(f'seat{i}_meld_1') for i in range(1, 4)])
+    tile = np.arange(34)
+    distance = abs(tile[:, None] - tile[None, :])
+    suit = np.minimum(tile // 9, 3)
+    same_suit = suit[:, None] == suit[None, :]
+    neighbors = (same_suit & (tile[:, None] < 27) & (distance >= 1) & (distance <= 2)).astype(np.float32)
+
+    by_row = np.arange(len(rows))[:, None]
+    seat = rows[:, target:target + 3].argmax(axis=1)
+    river = rows[by_row, river_start[seat, None] + tile].astype(np.float32)
+    meld = rows[by_row, meld_start[seat, None] + tile].astype(np.float32)
+    total = river.sum(axis=1, keepdims=True)
+    meld_total = meld.sum(axis=1, keepdims=True)
+    phase = np.minimum(total, 15) / 15
+    river_bias = (river @ same_suit) / np.maximum(total, 1) - (total > 0) * .25
+    meld_bias = (meld @ same_suit) / np.maximum(meld_total, 1) - (meld_total > 0) * .25
+    remaining = rows[:, -35:-1] / 4
+    signals = np.stack([river.clip(0, 2) / 2, (river @ neighbors).clip(0, 4) / 4,
+                        river_bias, meld_bias, river_bias * phase, meld_bias * phase], axis=-1)
+    return (signals * remaining[:, :, None]).astype(np.float32)
+
+
 class HandPredictor:
     """SavedModelを一度読み込み、複数の対局局面で再利用する。"""
 
@@ -176,11 +209,24 @@ class HandPredictor:
             raise ValueError('モデルの入力形式と特徴量定義が一致しません')
         self.model = tf.saved_model.load(str(model_dir / 'saved_model'))
         self.serving = self.model.signatures['serving_default']
+        self.discard_pattern = self.manifest.get('discard_pattern')
+        if self.discard_pattern is not None:
+            import math
+            weights = self.discard_pattern.get('coefficients', [])
+            if (self.profile != 'counts' or self.discard_pattern.get('version') != 1
+                    or len(weights) != 6 or not all(math.isfinite(w) for w in weights)):
+                raise ValueError('Invalid discard pattern coefficients')
 
     def predict_features(self, rows):
         import numpy as np
 
-        return self.serving(features=np.asarray(rows, dtype=np.float32))['expected_counts'].numpy()
+        x = np.asarray(rows, dtype=np.float32)
+        expected = self.serving(features=x)['expected_counts'].numpy()
+        if self.discard_pattern is None:
+            return expected
+        signals = discard_pattern_features(x, self.manifest['feature_names'])
+        adjusted = expected + signals @ self.discard_pattern['coefficients']
+        return np.clip(adjusted, 0, x[:, -35:-1]).astype(np.float32)
 
     def predict(self, observation, strategy='joint', seed=None):
         import numpy as np

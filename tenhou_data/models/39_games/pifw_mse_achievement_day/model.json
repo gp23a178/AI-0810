@@ -472,5 +472,36 @@
   "test_positions": 9308,
   "observers_per_position": 4,
   "train_target_rows": 511824,
-  "test_target_rows": 111696
+  "test_target_rows": 111696,
+  "discard_pattern": {
+    "version": 1,
+    "coefficients": [
+      -0.3976217239050594,
+      -0.2795119963573461,
+      -0.06715989541994871,
+      0.03584588460000477,
+      -0.2940764629895296,
+      -0.12917750218464988
+    ],
+    "fit": {
+      "regularization": 500,
+      "games": 39,
+      "target_rows": 511824
+    },
+    "held_out": {
+      "early_positions": 4408,
+      "early": [
+        0.491057813167572,
+        0.4762439429759979
+      ],
+      "mae": [
+        0.4582842290401459,
+        0.43823662400245667
+      ],
+      "joint": [
+        5.5625,
+        5.755208333333333
+      ]
+    }
+  }
 }

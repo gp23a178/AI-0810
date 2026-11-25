@@ -130,7 +130,7 @@ def evaluate(predictor, calibration, games):
     total = positives = 0
     for positions in games:
         for request, truth in positions:
-            result = live_result(predictor, request, calibration)
+            result = live_result(predictor, request, offline_calibration=calibration)
             for i, _, key, possible, hits in ground_truth(request, truth):
                 predicted_risk = {r['tile']: r['probability'] for r in result['opponents'][i]['ron_risks']}
                 for tile in possible:
